@@ -21,50 +21,65 @@
 __author__ = "Jose Fonseca et al"
 
 
-import sys
+import collections
+import fnmatch
+import json
+import locale
 import math
+import optparse
 import os.path
 import re
+import sys
 import textwrap
-import optparse
 import xml.parsers.expat
-import collections
-import locale
-import json
-import fnmatch
 
 # Python 2.x/3.x compatibility
 if sys.version_info[0] >= 3:
     PYTHON_3 = True
-    def compat_iteritems(x): return x.items()  # No iteritems() in Python 3
-    def compat_itervalues(x): return x.values()  # No itervalues() in Python 3
-    def compat_keys(x): return list(x.keys())  # keys() is a generator in Python 3
+
+    def compat_iteritems(x):
+        return x.items()  # No iteritems() in Python 3
+
+    def compat_itervalues(x):
+        return x.values()  # No itervalues() in Python 3
+
+    def compat_keys(x):
+        return list(x.keys())  # keys() is a generator in Python 3
+
     basestring = str  # No class basestring in Python 3
-    unichr = chr # No unichr in Python 3
-    xrange = range # No xrange in Python 3
+    unichr = chr  # No unichr in Python 3
+    xrange = range  # No xrange in Python 3
 else:
     PYTHON_3 = False
-    def compat_iteritems(x): return x.iteritems()
-    def compat_itervalues(x): return x.itervalues()
-    def compat_keys(x): return x.keys()
 
+    def compat_iteritems(x):
+        return x.iteritems()
+
+    def compat_itervalues(x):
+        return x.itervalues()
+
+    def compat_keys(x):
+        return x.keys()
 
 
 ########################################################################
 # Model
 
 
-MULTIPLICATION_SIGN = unichr(0xd7)
+MULTIPLICATION_SIGN = unichr(0xD7)
 
 
 def times(x):
     return "%u%s" % (x, MULTIPLICATION_SIGN)
 
+
 def percentage(p):
-    return "%.02f%%" % (p*100.0,)
+    return "%.02f%%" % (p * 100.0,)
+
 
 def add(a, b):
     return a + b
+
 
 def fail(a, b):
     assert False
@@ -72,38 +87,43 @@ def fail(a, b):
 
 tol = 2 ** -23
 
+
 def ratio(numerator, denominator):
     try:
-        ratio = float(numerator)/float(denominator)
+        ratio = float(numerator) / float(denominator)
     except ZeroDivisionError:
         # 0/0 is undefined, but 1.0 yields more useful results
         return 1.0
     if ratio < 0.0:
         if ratio < -tol:
-            sys.stderr.write('warning: negative ratio (%s/%s)\n' % (numerator, denominator))
+            sys.stderr.write(
+                "warning: negative ratio (%s/%s)\n" % (numerator, denominator)
+            )
         return 0.0
     if ratio > 1.0:
         if ratio > 1.0 + tol:
-            sys.stderr.write('warning: ratio greater than one (%s/%s)\n' % (numerator, denominator))
+            sys.stderr.write(
+                "warning: ratio greater than one (%s/%s)\n" % (numerator, denominator)
+            )
         return 1.0
     return ratio
 
 
 class UndefinedEvent(Exception):
     """Raised when attempting to get an event which is undefined."""
-    
+
     def __init__(self, event):
         Exception.__init__(self)
         self.event = event
 
     def __str__(self):
-        return 'unspecified event %s' % self.event.name
+        return "unspecified event %s" % self.event.name
 
 
 class Event(object):
     """Describe a kind of event, and its basic operations."""
 
-    def __init__(self, name, null, aggregator, formatter = str):
+    def __init__(self, name, null, aggregator, formatter=str):
         self.name = name
         self._null = null
         self._aggregator = aggregator
@@ -123,7 +143,7 @@ class Event(object):
         assert val1 is not None
         assert val2 is not None
         return self._aggregator(val1, val2)
-    
+
     def format(self, val):
         """Format an event value."""
         assert val is not None
@@ -144,20 +164,20 @@ SAMPLES2 = Event("Samples", 0, add, times)
 # Used only when totalMethod == callstacks
 TOTAL_SAMPLES = Event("Samples", 0, add, times)
 
-TIME = Event("Time", 0.0, add, lambda x: '(' + str(x) + ')')
-TIME_RATIO = Event("Time ratio", 0.0, add, lambda x: '(' + percentage(x) + ')')
+TIME = Event("Time", 0.0, add, lambda x: "(" + str(x) + ")")
+TIME_RATIO = Event("Time ratio", 0.0, add, lambda x: "(" + percentage(x) + ")")
 TOTAL_TIME = Event("Total time", 0.0, fail)
 TOTAL_TIME_RATIO = Event("Total time ratio", 0.0, fail, percentage)
 
 labels = {
-    'self-time': TIME,
-    'self-time-percentage': TIME_RATIO,
-    'total-time': TOTAL_TIME,
-    'total-time-percentage': TOTAL_TIME_RATIO,
+    "self-time": TIME,
+    "self-time-percentage": TIME_RATIO,
+    "total-time": TOTAL_TIME,
+    "total-time-percentage": TOTAL_TIME_RATIO,
 }
-defaultLabelNames = ['total-time-percentage', 'self-time-percentage']
+defaultLabelNames = ["total-time-percentage", "self-time-percentage"]
 
-totalMethod = 'callratios'
+totalMethod = "callratios"
 
 
 class Object(object):
@@ -180,13 +200,13 @@ class Object(object):
 
     def __contains__(self, event):
         return event in self.events
-    
+
     def __getitem__(self, event):
         try:
             return self.events[event]
         except KeyError:
             raise UndefinedEvent(event)
-    
+
     def __setitem__(self, event, value):
         if value is None:
             if event in self.events:
@@ -197,7 +217,7 @@ class Object(object):
 
 class Call(Object):
     """A call between functions.
-    
+
     There should be at most one call object for every pair of functions.
     """
 
@@ -222,10 +242,13 @@ class Function(Object):
         self.weight = None
         self.cycle = None
         self.filename = None
-    
+
     def add_call(self, call):
         if call.callee_id in self.calls:
-            sys.stderr.write('warning: overwriting call from function %s to %s\n' % (str(self.id), str(call.callee_id)))
+            sys.stderr.write(
+                "warning: overwriting call from function %s to %s\n"
+                % (str(self.id), str(call.callee_id))
+            )
         self.calls[call.callee_id] = call
 
     def get_call(self, callee_id):
@@ -237,9 +260,9 @@ class Function(Object):
             self.calls[callee_id] = call
         return self.calls[callee_id]
 
-    _parenthesis_re = re.compile(r'\([^()]*\)')
-    _angles_re = re.compile(r'<[^<>]*>')
-    _const_re = re.compile(r'\s+const$')
+    _parenthesis_re = re.compile(r"\([^()]*\)")
+    _angles_re = re.compile(r"<[^<>]*>")
+    _const_re = re.compile(r"\s+const$")
 
     def stripped_name(self):
         """Remove extraneous information from C++ demangled function names."""
@@ -248,16 +271,16 @@ class Function(Object):
 
         # Strip function parameters from name by recursively removing paired parenthesis
         while True:
-            name, n = self._parenthesis_re.subn('', name)
+            name, n = self._parenthesis_re.subn("", name)
             if not n:
                 break
 
         # Strip const qualifier
-        name = self._const_re.sub('', name)
+        name = self._const_re.sub("", name)
 
         # Strip template parameters from name by recursively removing paired angles
         while True:
-            name, n = self._angles_re.subn('', name)
+            name, n = self._angles_re.subn("", name)
             if not n:
                 break
 
@@ -296,7 +319,10 @@ class Profile(Object):
 
     def add_function(self, function):
         if function.id in self.functions:
-            sys.stderr.write('warning: overwriting function %s (id %s)\n' % (function.name, str(function.id)))
+            sys.stderr.write(
+                "warning: overwriting function %s (id %s)\n"
+                % (function.name, str(function.id))
+            )
         self.functions[function.id] = function
 
     def add_cycle(self, cycle):
@@ -309,7 +335,10 @@ class Profile(Object):
             for callee_id in compat_keys(function.calls):
                 assert function.calls[callee_id].callee_id == callee_id
                 if callee_id not in self.functions:
-                    sys.stderr.write('warning: call to undefined function %s from function %s\n' % (str(callee_id), function.name))
+                    sys.stderr.write(
+                        "warning: call to undefined function %s from function %s\n"
+                        % (str(callee_id), function.name)
+                    )
                     del function.calls[callee_id]
 
     def find_cycles(self):
@@ -342,7 +371,9 @@ class Profile(Object):
                 continue
             f = self.functions[node]
             newNodes = set(f.calls.keys()) - visited
-            frontier = frontier.union({(new_node, node_depth - 1) for new_node in newNodes})
+            frontier = frontier.union(
+                {(new_node, node_depth - 1) for new_node in newNodes}
+            )
         subtreeFunctions = {}
         for n in visited:
             f = self.functions[n]
@@ -368,7 +399,9 @@ class Profile(Object):
             if node_depth == 0:
                 continue
             newNodes = edgesUp[node] - visited
-            frontier = frontier.union({(new_node, node_depth - 1) for new_node in newNodes})
+            frontier = frontier.union(
+                {(new_node, node_depth - 1) for new_node in newNodes}
+            )
         downTree = set(self.functions.keys())
         upTree = visited
         path = downTree.intersection(upTree)
@@ -385,7 +418,10 @@ class Profile(Object):
 
     def getFunctionIds(self, funcName):
         function_names = {v.name: k for (k, v) in self.functions.items()}
-        return [function_names[name] for name in fnmatch.filter(function_names.keys(), funcName)]
+        return [
+            function_names[name]
+            for name in fnmatch.filter(function_names.keys(), funcName)
+        ]
 
     def getFunctionId(self, funcName):
         for f in self.functions:
@@ -458,10 +494,19 @@ class Profile(Object):
                     callee = self.functions[call.callee_id]
                     if event in call.events:
                         function_totals[callee] += call[event]
-                        if callee.cycle is not None and callee.cycle is not function.cycle:
+                        if (
+                            callee.cycle is not None
+                            and callee.cycle is not function.cycle
+                        ):
                             cycle_totals[callee.cycle] += call[event]
                     else:
-                        sys.stderr.write("call_ratios: No data for " + function.name + " call to " + callee.name + "\n")
+                        sys.stderr.write(
+                            "call_ratios: No data for "
+                            + function.name
+                            + " call to "
+                            + callee.name
+                            + "\n"
+                        )
 
         # Pass 2:  Compute the ratios.  Each call[event] is scaled by the
         #          function_total of the callee.  Calls into cycles use the
@@ -472,7 +517,10 @@ class Profile(Object):
                 if call.callee_id != function.id:
                     callee = self.functions[call.callee_id]
                     if event in call.events:
-                        if callee.cycle is not None and callee.cycle is not function.cycle:
+                        if (
+                            callee.cycle is not None
+                            and callee.cycle is not function.cycle
+                        ):
                             total = cycle_totals[callee.cycle]
                         else:
                             total = function_totals[callee]
@@ -500,7 +548,7 @@ class Profile(Object):
                 if call.callee_id != function.id:
                     assert call.ratio is not None
 
-        # Aggregate the input for each cycle 
+        # Aggregate the input for each cycle
         for cycle in self.cycles:
             total = inevent.null()
             for function in compat_itervalues(self.functions):
@@ -525,12 +573,12 @@ class Profile(Object):
                         total += self._integrate_call(call, outevent, inevent)
                 function[outevent] = total
             return function[outevent]
-    
+
     def _integrate_call(self, call, outevent, inevent):
         assert outevent not in call
         assert call.ratio is not None
         callee = self.functions[call.callee_id]
-        subtotal = call.ratio *self._integrate_function(callee, outevent, inevent)
+        subtotal = call.ratio * self._integrate_function(callee, outevent, inevent)
         call[outevent] = subtotal
         return subtotal
 
@@ -547,7 +595,7 @@ class Profile(Object):
                         subtotal += self._integrate_call(call, outevent, inevent)
                 total += subtotal
             cycle[outevent] = total
-            
+
             # Compute the time propagated to callers of this cycle
             callees = {}
             for function in compat_itervalues(self.functions):
@@ -559,7 +607,7 @@ class Profile(Object):
                                 callees[callee] += call.ratio
                             except KeyError:
                                 callees[callee] = call.ratio
-            
+
             for member in cycle.functions:
                 member[outevent] = outevent.null()
 
@@ -569,13 +617,22 @@ class Profile(Object):
                 partials = {}
                 self._rank_cycle_function(cycle, callee, ranks)
                 self._call_ratios_cycle(cycle, callee, ranks, call_ratios, set())
-                partial = self._integrate_cycle_function(cycle, callee, call_ratio, partials, ranks, call_ratios, outevent, inevent)
+                partial = self._integrate_cycle_function(
+                    cycle,
+                    callee,
+                    call_ratio,
+                    partials,
+                    ranks,
+                    call_ratios,
+                    outevent,
+                    inevent,
+                )
 
                 # Ensure `partial == max(partials.values())`, but with round-off tolerance
                 max_partial = max(partials.values())
-                assert abs(partial - max_partial) <= 1e-7*max_partial
+                assert abs(partial - max_partial) <= 1e-7 * max_partial
 
-                assert abs(call_ratio*total - partial) <= 0.001*call_ratio*total
+                assert abs(call_ratio * total - partial) <= 0.001 * call_ratio * total
 
         return cycle[outevent]
 
@@ -587,6 +644,7 @@ class Profile(Object):
         """
 
         import heapq
+
         Q = []
         Qd = {}
         p = {}
@@ -605,7 +663,7 @@ class Profile(Object):
         while Q:
             cost, parent, member = heapq.heappop(Q)
             if member not in visited:
-                p[member]= parent
+                p[member] = parent
                 visited.add(member)
                 for call in compat_itervalues(member.calls):
                     if call.callee_id != member.id:
@@ -636,23 +694,46 @@ class Profile(Object):
                     callee = self.functions[call.callee_id]
                     if callee.cycle is cycle:
                         if ranks[callee] > ranks[function]:
-                            call_ratios[callee] = call_ratios.get(callee, 0.0) + call.ratio
-                            self._call_ratios_cycle(cycle, callee, ranks, call_ratios, visited)
+                            call_ratios[callee] = (
+                                call_ratios.get(callee, 0.0) + call.ratio
+                            )
+                            self._call_ratios_cycle(
+                                cycle, callee, ranks, call_ratios, visited
+                            )
 
-    def _integrate_cycle_function(self, cycle, function, partial_ratio, partials, ranks, call_ratios, outevent, inevent):
+    def _integrate_cycle_function(
+        self,
+        cycle,
+        function,
+        partial_ratio,
+        partials,
+        ranks,
+        call_ratios,
+        outevent,
+        inevent,
+    ):
         if function not in partials:
-            partial = partial_ratio*function[inevent]
+            partial = partial_ratio * function[inevent]
             for call in compat_itervalues(function.calls):
                 if call.callee_id != function.id:
                     callee = self.functions[call.callee_id]
                     if callee.cycle is not cycle:
                         assert outevent in call
-                        partial += partial_ratio*call[outevent]
+                        partial += partial_ratio * call[outevent]
                     else:
                         if ranks[callee] > ranks[function]:
-                            callee_partial = self._integrate_cycle_function(cycle, callee, partial_ratio, partials, ranks, call_ratios, outevent, inevent)
+                            callee_partial = self._integrate_cycle_function(
+                                cycle,
+                                callee,
+                                partial_ratio,
+                                partials,
+                                ranks,
+                                call_ratios,
+                                outevent,
+                                inevent,
+                            )
                             call_ratio = ratio(call.ratio, call_ratios[callee])
-                            call_partial = call_ratio*callee_partial
+                            call_partial = call_ratio * callee_partial
                             try:
                                 call[outevent] += call_partial
                             except UndefinedEvent:
@@ -704,11 +785,13 @@ class Profile(Object):
 
                 if TOTAL_TIME_RATIO in call:
                     # handle exact cases first
-                    call.weight = call[TOTAL_TIME_RATIO] 
+                    call.weight = call[TOTAL_TIME_RATIO]
                 else:
                     try:
                         # make a safe estimate
-                        call.weight = min(function[TOTAL_TIME_RATIO], callee[TOTAL_TIME_RATIO]) 
+                        call.weight = min(
+                            function[TOTAL_TIME_RATIO], callee[TOTAL_TIME_RATIO]
+                        )
                     except UndefinedEvent:
                         pass
 
@@ -718,20 +801,32 @@ class Profile(Object):
             if function.weight is not None:
                 if function.weight < node_thres:
                     del self.functions[function_id]
-        
+
         # prune file paths
         for function_id in compat_keys(self.functions):
             function = self.functions[function_id]
-            if paths and function.filename and not any(function.filename.startswith(path) for path in paths):
+            if (
+                paths
+                and function.filename
+                and not any(function.filename.startswith(path) for path in paths)
+            ):
                 del self.functions[function_id]
-            elif paths and function.module and not any((function.module.find(path)>-1) for path in paths):
+            elif (
+                paths
+                and function.module
+                and not any((function.module.find(path) > -1) for path in paths)
+            ):
                 del self.functions[function_id]
 
         # prune the edges
         for function in compat_itervalues(self.functions):
             for callee_id in compat_keys(function.calls):
                 call = function.calls[callee_id]
-                if callee_id not in self.functions or call.weight is not None and call.weight < edge_thres:
+                if (
+                    callee_id not in self.functions
+                    or call.weight is not None
+                    and call.weight < edge_thres
+                ):
                     del function.calls[callee_id]
 
         if color_nodes_by_selftime:
@@ -749,25 +844,24 @@ class Profile(Object):
                     function.weight = function[TIME_RATIO] / max_ratio
                 except (ZeroDivisionError, UndefinedEvent):
                     pass
-    
+
     def dump(self):
         for function in compat_itervalues(self.functions):
-            sys.stderr.write('Function %s:\n' % (function.name,))
+            sys.stderr.write("Function %s:\n" % (function.name,))
             self._dump_events(function.events)
             for call in compat_itervalues(function.calls):
                 callee = self.functions[call.callee_id]
-                sys.stderr.write('  Call %s:\n' % (callee.name,))
+                sys.stderr.write("  Call %s:\n" % (callee.name,))
                 self._dump_events(call.events)
         for cycle in self.cycles:
-            sys.stderr.write('Cycle:\n')
+            sys.stderr.write("Cycle:\n")
             self._dump_events(cycle.events)
             for function in cycle.functions:
-                sys.stderr.write('  Function %s\n' % (function.name,))
+                sys.stderr.write("  Function %s\n" % (function.name,))
 
     def _dump_events(self, events):
         for event, value in compat_iteritems(events):
-            sys.stderr.write('    %s: %s\n' % (event.name, event.format(value)))
-
+            sys.stderr.write("    %s: %s\n" % (event.name, event.format(value)))
 
 
 ########################################################################
@@ -777,11 +871,11 @@ class Profile(Object):
 class Struct:
     """Masquerade a dictionary with a structure-like behavior."""
 
-    def __init__(self, attrs = None):
+    def __init__(self, attrs=None):
         if attrs is None:
             attrs = {}
-        self.__dict__['_attrs'] = attrs
-    
+        self.__dict__["_attrs"] = attrs
+
     def __getattr__(self, name):
         try:
             return self._attrs[name]
@@ -796,7 +890,7 @@ class Struct:
 
     def __repr__(self):
         return repr(self._attrs)
-    
+
 
 class ParseError(Exception):
     """Raised when parsing to signal mismatches."""
@@ -808,7 +902,7 @@ class ParseError(Exception):
         self.line = line
 
     def __str__(self):
-        return '%s: %r' % (self.msg, self.line)
+        return "%s: %r" % (self.msg, self.line)
 
 
 class Parser:
@@ -823,13 +917,12 @@ class Parser:
     def parse(self):
         raise NotImplementedError
 
-    
+
 class JsonParser(Parser):
     """Parser for a custom JSON representation of profile data.
 
     See schema.json for details.
     """
-
 
     def __init__(self, stream):
         Parser.__init__(self)
@@ -839,40 +932,40 @@ class JsonParser(Parser):
 
         obj = json.load(self.stream)
 
-        assert obj['version'] == 0
+        assert obj["version"] == 0
 
         profile = Profile()
         profile[SAMPLES] = 0
 
-        fns = obj['functions']
+        fns = obj["functions"]
 
         for functionIndex in range(len(fns)):
             fn = fns[functionIndex]
-            function = Function(functionIndex, fn['name'])
+            function = Function(functionIndex, fn["name"])
             try:
-                function.module = fn['module']
+                function.module = fn["module"]
             except KeyError:
                 pass
             try:
-                function.process = fn['process']
+                function.process = fn["process"]
             except KeyError:
                 pass
             function[SAMPLES] = 0
             function.called = 0
             profile.add_function(function)
 
-        for event in obj['events']:
+        for event in obj["events"]:
             callchain = []
 
-            for functionIndex in event['callchain']:
+            for functionIndex in event["callchain"]:
                 function = profile.functions[functionIndex]
                 callchain.append(function)
 
             # increment the call count of the first in the callchain
-            function = profile.functions[event['callchain'][0]]
+            function = profile.functions[event["callchain"][0]]
             function.called = function.called + 1
 
-            cost = event['cost'][0]
+            cost = event["cost"][0]
 
             callee = callchain[0]
             callee[SAMPLES] += cost
@@ -916,11 +1009,11 @@ class LineParser(Parser):
     def readline(self):
         line = self._stream.readline()
         if not line:
-            self.__line = ''
+            self.__line = ""
             self.__eof = True
         else:
             self.line_no += 1
-        line = line.rstrip('\r\n')
+        line = line.rstrip("\r\n")
         if not PYTHON_3:
             encoding = self._stream.encoding
             if encoding is None:
@@ -947,8 +1040,7 @@ XML_ELEMENT_START, XML_ELEMENT_END, XML_CHARACTER_DATA, XML_EOF = range(4)
 
 
 class XmlToken:
-
-    def __init__(self, type, name_or_data, attrs = None, line = None, column = None):
+    def __init__(self, type, name_or_data, attrs=None, line=None, column=None):
         assert type in (XML_ELEMENT_START, XML_ELEMENT_END, XML_CHARACTER_DATA, XML_EOF)
         self.type = type
         self.name_or_data = name_or_data
@@ -958,40 +1050,40 @@ class XmlToken:
 
     def __str__(self):
         if self.type == XML_ELEMENT_START:
-            return '<' + self.name_or_data + ' ...>'
+            return "<" + self.name_or_data + " ...>"
         if self.type == XML_ELEMENT_END:
-            return '</' + self.name_or_data + '>'
+            return "</" + self.name_or_data + ">"
         if self.type == XML_CHARACTER_DATA:
             return self.name_or_data
         if self.type == XML_EOF:
-            return 'end of file'
+            return "end of file"
         assert 0
 
 
 class XmlTokenizer:
     """Expat based XML tokenizer."""
 
-    def __init__(self, fp, skip_ws = True):
+    def __init__(self, fp, skip_ws=True):
         self.fp = fp
         self.tokens = []
         self.index = 0
         self.final = False
         self.skip_ws = skip_ws
-        
+
         self.character_pos = 0, 0
-        self.character_data = ''
-        
+        self.character_data = ""
+
         self.parser = xml.parsers.expat.ParserCreate()
-        self.parser.StartElementHandler  = self.handle_element_start
-        self.parser.EndElementHandler    = self.handle_element_end
+        self.parser.StartElementHandler = self.handle_element_start
+        self.parser.EndElementHandler = self.handle_element_end
         self.parser.CharacterDataHandler = self.handle_character_data
-    
+
     def handle_element_start(self, name, attributes):
         self.finish_character_data()
         line, column = self.pos()
         token = XmlToken(XML_ELEMENT_START, name, attributes, line, column)
         self.tokens.append(token)
-    
+
     def handle_element_end(self, name):
         self.finish_character_data()
         line, column = self.pos()
@@ -1002,17 +1094,19 @@ class XmlTokenizer:
         if not self.character_data:
             self.character_pos = self.pos()
         self.character_data += data
-    
+
     def finish_character_data(self):
         if self.character_data:
-            if not self.skip_ws or not self.character_data.isspace(): 
+            if not self.skip_ws or not self.character_data.isspace():
                 line, column = self.character_pos
-                token = XmlToken(XML_CHARACTER_DATA, self.character_data, None, line, column)
+                token = XmlToken(
+                    XML_CHARACTER_DATA, self.character_data, None, line, column
+                )
                 self.tokens.append(token)
-            self.character_data = ''
-    
+            self.character_data = ""
+
     def next(self):
-        size = 16*1024
+        size = 16 * 1024
         while self.index >= len(self.tokens) and not self.final:
             self.tokens = []
             self.index = 0
@@ -1032,14 +1126,18 @@ class XmlTokenizer:
 
 
 class XmlTokenMismatch(Exception):
-
     def __init__(self, expected, found):
         Exception.__init__(self)
         self.expected = expected
         self.found = found
 
     def __str__(self):
-        return '%u:%u: %s expected, %s found' % (self.found.line, self.found.column, str(self.expected), str(self.found))
+        return "%u:%u: %s expected, %s found" % (
+            self.found.line,
+            self.found.column,
+            str(self.expected),
+            str(self.found),
+        )
 
 
 class XmlParser(Parser):
@@ -1049,13 +1147,13 @@ class XmlParser(Parser):
         Parser.__init__(self)
         self.tokenizer = XmlTokenizer(fp)
         self.consume()
-    
+
     def consume(self):
         self.token = self.tokenizer.next()
 
     def match_element_start(self, name):
         return self.token.type == XML_ELEMENT_START and self.token.name_or_data == name
-    
+
     def match_element_end(self, name):
         return self.token.type == XML_ELEMENT_END and self.token.name_or_data == name
 
@@ -1069,7 +1167,7 @@ class XmlParser(Parser):
         attrs = self.token.attrs
         self.consume()
         return attrs
-    
+
     def element_end(self, name):
         while self.token.type == XML_CHARACTER_DATA:
             self.consume()
@@ -1079,8 +1177,8 @@ class XmlParser(Parser):
             raise XmlTokenMismatch(XmlToken(XML_ELEMENT_END, name), self.token)
         self.consume()
 
-    def character_data(self, strip = True):
-        data = ''
+    def character_data(self, strip=True):
+        data = ""
         while self.token.type == XML_CHARACTER_DATA:
             data += self.token.name_or_data
             self.consume()
@@ -1108,13 +1206,13 @@ class GprofParser(Parser):
     def readline(self):
         line = self.fp.readline()
         if not line:
-            sys.stderr.write('error: unexpected end of file\n')
+            sys.stderr.write("error: unexpected end of file\n")
             sys.exit(1)
-        line = line.rstrip('\r\n')
+        line = line.rstrip("\r\n")
         return line
 
-    _int_re = re.compile(r'^\d+$')
-    _float_re = re.compile(r'^\d+\.\d+$')
+    _int_re = re.compile(r"^\d+$")
+    _float_re = re.compile(r"^\d+\.\d+$")
 
     def translate(self, mo):
         """Extract a structure from a match object, while translating the types in the process."""
@@ -1127,67 +1225,68 @@ class GprofParser(Parser):
                 value = int(value)
             elif self._float_re.match(value):
                 value = float(value)
-            attrs[name] = (value)
+            attrs[name] = value
         return Struct(attrs)
 
     _cg_header_re = re.compile(
         # original gprof header
-        r'^\s+called/total\s+parents\s*$|' +
-        r'^index\s+%time\s+self\s+descendents\s+called\+self\s+name\s+index\s*$|' +
-        r'^\s+called/total\s+children\s*$|' +
+        r"^\s+called/total\s+parents\s*$|"
+        + r"^index\s+%time\s+self\s+descendents\s+called\+self\s+name\s+index\s*$|"
+        + r"^\s+called/total\s+children\s*$|"
+        +
         # GNU gprof header
-        r'^index\s+%\s+time\s+self\s+children\s+called\s+name\s*$'
+        r"^index\s+%\s+time\s+self\s+children\s+called\s+name\s*$"
     )
 
     _cg_ignore_re = re.compile(
         # spontaneous
-        r'^\s+<spontaneous>\s*$|'
+        r"^\s+<spontaneous>\s*$|"
         # internal calls (such as "mcount")
-        r'^.*\((\d+)\)$'
+        r"^.*\((\d+)\)$"
     )
 
     _cg_primary_re = re.compile(
-        r'^\[(?P<index>\d+)\]?' + 
-        r'\s+(?P<percentage_time>\d+\.\d+)' + 
-        r'\s+(?P<self>\d+\.\d+)' + 
-        r'\s+(?P<descendants>\d+\.\d+)' + 
-        r'\s+(?:(?P<called>\d+)(?:\+(?P<called_self>\d+))?)?' + 
-        r'\s+(?P<name>\S.*?)' +
-        r'(?:\s+<cycle\s(?P<cycle>\d+)>)?' +
-        r'\s\[(\d+)\]$'
+        r"^\[(?P<index>\d+)\]?"
+        + r"\s+(?P<percentage_time>\d+\.\d+)"
+        + r"\s+(?P<self>\d+\.\d+)"
+        + r"\s+(?P<descendants>\d+\.\d+)"
+        + r"\s+(?:(?P<called>\d+)(?:\+(?P<called_self>\d+))?)?"
+        + r"\s+(?P<name>\S.*?)"
+        + r"(?:\s+<cycle\s(?P<cycle>\d+)>)?"
+        + r"\s\[(\d+)\]$"
     )
 
     _cg_parent_re = re.compile(
-        r'^\s+(?P<self>\d+\.\d+)?' + 
-        r'\s+(?P<descendants>\d+\.\d+)?' + 
-        r'\s+(?P<called>\d+)(?:/(?P<called_total>\d+))?' + 
-        r'\s+(?P<name>\S.*?)' +
-        r'(?:\s+<cycle\s(?P<cycle>\d+)>)?' +
-        r'\s\[(?P<index>\d+)\]$'
+        r"^\s+(?P<self>\d+\.\d+)?"
+        + r"\s+(?P<descendants>\d+\.\d+)?"
+        + r"\s+(?P<called>\d+)(?:/(?P<called_total>\d+))?"
+        + r"\s+(?P<name>\S.*?)"
+        + r"(?:\s+<cycle\s(?P<cycle>\d+)>)?"
+        + r"\s\[(?P<index>\d+)\]$"
     )
 
     _cg_child_re = _cg_parent_re
 
     _cg_cycle_header_re = re.compile(
-        r'^\[(?P<index>\d+)\]?' + 
-        r'\s+(?P<percentage_time>\d+\.\d+)' + 
-        r'\s+(?P<self>\d+\.\d+)' + 
-        r'\s+(?P<descendants>\d+\.\d+)' + 
-        r'\s+(?:(?P<called>\d+)(?:\+(?P<called_self>\d+))?)?' + 
-        r'\s+<cycle\s(?P<cycle>\d+)\sas\sa\swhole>' +
-        r'\s\[(\d+)\]$'
+        r"^\[(?P<index>\d+)\]?"
+        + r"\s+(?P<percentage_time>\d+\.\d+)"
+        + r"\s+(?P<self>\d+\.\d+)"
+        + r"\s+(?P<descendants>\d+\.\d+)"
+        + r"\s+(?:(?P<called>\d+)(?:\+(?P<called_self>\d+))?)?"
+        + r"\s+<cycle\s(?P<cycle>\d+)\sas\sa\swhole>"
+        + r"\s\[(\d+)\]$"
     )
 
     _cg_cycle_member_re = re.compile(
-        r'^\s+(?P<self>\d+\.\d+)?' + 
-        r'\s+(?P<descendants>\d+\.\d+)?' + 
-        r'\s+(?P<called>\d+)(?:\+(?P<called_self>\d+))?' + 
-        r'\s+(?P<name>\S.*?)' +
-        r'(?:\s+<cycle\s(?P<cycle>\d+)>)?' +
-        r'\s\[(?P<index>\d+)\]$'
+        r"^\s+(?P<self>\d+\.\d+)?"
+        + r"\s+(?P<descendants>\d+\.\d+)?"
+        + r"\s+(?P<called>\d+)(?:\+(?P<called_self>\d+))?"
+        + r"\s+(?P<name>\S.*?)"
+        + r"(?:\s+<cycle\s(?P<cycle>\d+)>)?"
+        + r"\s\[(?P<index>\d+)\]$"
     )
 
-    _cg_sep_re = re.compile(r'^--+$')
+    _cg_sep_re = re.compile(r"^--+$")
 
     def parse_function_entry(self, lines):
         parents = []
@@ -1195,17 +1294,17 @@ class GprofParser(Parser):
 
         while True:
             if not lines:
-                sys.stderr.write('warning: unexpected end of entry\n')
+                sys.stderr.write("warning: unexpected end of entry\n")
             line = lines.pop(0)
-            if line.startswith('['):
+            if line.startswith("["):
                 break
-        
+
             # read function parent line
             mo = self._cg_parent_re.match(line)
             if not mo:
                 if self._cg_ignore_re.match(line):
                     continue
-                sys.stderr.write('warning: unrecognized call graph entry: %r\n' % line)
+                sys.stderr.write("warning: unrecognized call graph entry: %r\n" % line)
             else:
                 parent = self.translate(mo)
                 parents.append(parent)
@@ -1213,24 +1312,24 @@ class GprofParser(Parser):
         # read primary line
         mo = self._cg_primary_re.match(line)
         if not mo:
-            sys.stderr.write('warning: unrecognized call graph entry: %r\n' % line)
+            sys.stderr.write("warning: unrecognized call graph entry: %r\n" % line)
             return
         else:
             function = self.translate(mo)
 
         while lines:
             line = lines.pop(0)
-            
+
             # read function subroutine line
             mo = self._cg_child_re.match(line)
             if not mo:
                 if self._cg_ignore_re.match(line):
                     continue
-                sys.stderr.write('warning: unrecognized call graph entry: %r\n' % line)
+                sys.stderr.write("warning: unrecognized call graph entry: %r\n" % line)
             else:
                 child = self.translate(mo)
                 children.append(child)
-        
+
         function.parents = parents
         function.children = children
 
@@ -1242,7 +1341,7 @@ class GprofParser(Parser):
         line = lines[0]
         mo = self._cg_cycle_header_re.match(line)
         if not mo:
-            sys.stderr.write('warning: unrecognized call graph entry: %r\n' % line)
+            sys.stderr.write("warning: unrecognized call graph entry: %r\n" % line)
             return
         cycle = self.translate(mo)
 
@@ -1251,11 +1350,11 @@ class GprofParser(Parser):
         for line in lines[1:]:
             mo = self._cg_cycle_member_re.match(line)
             if not mo:
-                sys.stderr.write('warning: unrecognized call graph entry: %r\n' % line)
+                sys.stderr.write("warning: unrecognized call graph entry: %r\n" % line)
                 continue
             call = self.translate(mo)
             cycle.functions.append(call)
-        
+
         self.cycles[cycle.cycle] = cycle
 
     def parse_cg_entry(self, lines):
@@ -1276,22 +1375,22 @@ class GprofParser(Parser):
 
         # process call graph entries
         entry_lines = []
-        while line != '\014': # form feed
+        while line != "\014":  # form feed
             if line and not line.isspace():
                 if self._cg_sep_re.match(line):
                     self.parse_cg_entry(entry_lines)
                     entry_lines = []
                 else:
-                    entry_lines.append(line)            
+                    entry_lines.append(line)
             line = self.readline()
-    
+
     def parse(self):
         self.parse_cg()
         self.fp.close()
 
         profile = Profile()
         profile[TIME] = 0.0
-        
+
         cycles = {}
         for index in self.cycles:
             cycles[index] = Cycle()
@@ -1306,16 +1405,16 @@ class GprofParser(Parser):
                 call = Call(entry.index)
                 call[CALLS] = entry.called_self
                 function.called += entry.called_self
-            
+
             # populate the function calls
             for child in entry.children:
                 call = Call(child.index)
-                
+
                 assert child.called is not None
                 call[CALLS] = child.called
 
                 if child.index not in self.functions:
-                    # NOTE: functions that were never called but were discovered by gprof's 
+                    # NOTE: functions that were never called but were discovered by gprof's
                     # static call graph analysis dont have a call graph entry so we need
                     # to add them here
                     missing = Function(child.index, child.name)
@@ -1331,7 +1430,9 @@ class GprofParser(Parser):
                 try:
                     cycle = cycles[entry.cycle]
                 except KeyError:
-                    sys.stderr.write('warning: <cycle %u as a whole> entry missing\n' % entry.cycle) 
+                    sys.stderr.write(
+                        "warning: <cycle %u as a whole> entry missing\n" % entry.cycle
+                    )
                     cycle = Cycle()
                     cycles[entry.cycle] = cycle
                 cycle.add_function(function)
@@ -1381,13 +1482,13 @@ class AXEParser(Parser):
     def readline(self):
         line = self.fp.readline()
         if not line:
-            sys.stderr.write('error: unexpected end of file\n')
+            sys.stderr.write("error: unexpected end of file\n")
             sys.exit(1)
-        line = line.rstrip('\r\n')
+        line = line.rstrip("\r\n")
         return line
 
-    _int_re = re.compile(r'^\d+$')
-    _float_re = re.compile(r'^\d+\.\d+$')
+    _int_re = re.compile(r"^\d+$")
+    _float_re = re.compile(r"^\d+\.\d+$")
 
     def translate(self, mo):
         """Extract a structure from a match object, while translating the types in the process."""
@@ -1400,55 +1501,52 @@ class AXEParser(Parser):
                 value = int(value)
             elif self._float_re.match(value):
                 value = float(value)
-            attrs[name] = (value)
+            attrs[name] = value
         return Struct(attrs)
 
-    _cg_header_re = re.compile(
-        '^Index |'
-        '^-----+ '
-    )
+    _cg_header_re = re.compile("^Index |" "^-----+ ")
 
-    _cg_footer_re = re.compile(r'^Index\s+Function\s*$')
+    _cg_footer_re = re.compile(r"^Index\s+Function\s*$")
 
     _cg_primary_re = re.compile(
-        r'^\[(?P<index>\d+)\]?' + 
-        r'\s+(?P<percentage_time>\d+\.\d+)' + 
-        r'\s+(?P<self>\d+\.\d+)' + 
-        r'\s+(?P<descendants>\d+\.\d+)' + 
-        r'\s+(?P<name>\S.*?)' +
-        r'(?:\s+<cycle\s(?P<cycle>\d+)>)?' +
-        r'\s+\[(\d+)\]' +
-        r'\s*$'
+        r"^\[(?P<index>\d+)\]?"
+        + r"\s+(?P<percentage_time>\d+\.\d+)"
+        + r"\s+(?P<self>\d+\.\d+)"
+        + r"\s+(?P<descendants>\d+\.\d+)"
+        + r"\s+(?P<name>\S.*?)"
+        + r"(?:\s+<cycle\s(?P<cycle>\d+)>)?"
+        + r"\s+\[(\d+)\]"
+        + r"\s*$"
     )
 
     _cg_parent_re = re.compile(
-        r'^\s+(?P<self>\d+\.\d+)?' + 
-        r'\s+(?P<descendants>\d+\.\d+)?' + 
-        r'\s+(?P<name>\S.*?)' +
-        r'(?:\s+<cycle\s(?P<cycle>\d+)>)?' +
-        r'(?:\s+\[(?P<index>\d+)\]\s*)?' +
-        r'\s*$'
+        r"^\s+(?P<self>\d+\.\d+)?"
+        + r"\s+(?P<descendants>\d+\.\d+)?"
+        + r"\s+(?P<name>\S.*?)"
+        + r"(?:\s+<cycle\s(?P<cycle>\d+)>)?"
+        + r"(?:\s+\[(?P<index>\d+)\]\s*)?"
+        + r"\s*$"
     )
 
     _cg_child_re = _cg_parent_re
 
     _cg_cycle_header_re = re.compile(
-        r'^\[(?P<index>\d+)\]?' + 
-        r'\s+(?P<percentage_time>\d+\.\d+)' + 
-        r'\s+(?P<self>\d+\.\d+)' + 
-        r'\s+(?P<descendants>\d+\.\d+)' + 
-        r'\s+<cycle\s(?P<cycle>\d+)\sas\sa\swhole>' +
-        r'\s+\[(\d+)\]' +
-        r'\s*$'
+        r"^\[(?P<index>\d+)\]?"
+        + r"\s+(?P<percentage_time>\d+\.\d+)"
+        + r"\s+(?P<self>\d+\.\d+)"
+        + r"\s+(?P<descendants>\d+\.\d+)"
+        + r"\s+<cycle\s(?P<cycle>\d+)\sas\sa\swhole>"
+        + r"\s+\[(\d+)\]"
+        + r"\s*$"
     )
 
     _cg_cycle_member_re = re.compile(
-        r'^\s+(?P<self>\d+\.\d+)?' + 
-        r'\s+(?P<descendants>\d+\.\d+)?' + 
-        r'\s+(?P<name>\S.*?)' +
-        r'(?:\s+<cycle\s(?P<cycle>\d+)>)?' +
-        r'\s+\[(?P<index>\d+)\]' +
-        r'\s*$'
+        r"^\s+(?P<self>\d+\.\d+)?"
+        + r"\s+(?P<descendants>\d+\.\d+)?"
+        + r"\s+(?P<name>\S.*?)"
+        + r"(?:\s+<cycle\s(?P<cycle>\d+)>)?"
+        + r"\s+\[(?P<index>\d+)\]"
+        + r"\s*$"
     )
 
     def parse_function_entry(self, lines):
@@ -1457,42 +1555,46 @@ class AXEParser(Parser):
 
         while True:
             if not lines:
-                sys.stderr.write('warning: unexpected end of entry\n')
+                sys.stderr.write("warning: unexpected end of entry\n")
                 return
             line = lines.pop(0)
-            if line.startswith('['):
+            if line.startswith("["):
                 break
-        
+
             # read function parent line
             mo = self._cg_parent_re.match(line)
             if not mo:
-                sys.stderr.write('warning: unrecognized call graph entry (1): %r\n' % line)
+                sys.stderr.write(
+                    "warning: unrecognized call graph entry (1): %r\n" % line
+                )
             else:
                 parent = self.translate(mo)
-                if parent.name != '<spontaneous>':
+                if parent.name != "<spontaneous>":
                     parents.append(parent)
 
         # read primary line
         mo = self._cg_primary_re.match(line)
         if not mo:
-            sys.stderr.write('warning: unrecognized call graph entry (2): %r\n' % line)
+            sys.stderr.write("warning: unrecognized call graph entry (2): %r\n" % line)
             return
         else:
             function = self.translate(mo)
 
         while lines:
             line = lines.pop(0)
-            
+
             # read function subroutine line
             mo = self._cg_child_re.match(line)
             if not mo:
-                sys.stderr.write('warning: unrecognized call graph entry (3): %r\n' % line)
+                sys.stderr.write(
+                    "warning: unrecognized call graph entry (3): %r\n" % line
+                )
             else:
                 child = self.translate(mo)
-                if child.name != '<spontaneous>':
+                if child.name != "<spontaneous>":
                     children.append(child)
 
-        if function.name != '<spontaneous>':
+        if function.name != "<spontaneous>":
             function.parents = parents
             function.children = children
 
@@ -1504,23 +1606,25 @@ class AXEParser(Parser):
         parents = []
         while True:
             if not lines:
-                sys.stderr.write('warning: unexpected end of cycle entry\n')
+                sys.stderr.write("warning: unexpected end of cycle entry\n")
                 return
             line = lines.pop(0)
-            if line.startswith('['):
+            if line.startswith("["):
                 break
             mo = self._cg_parent_re.match(line)
             if not mo:
-                sys.stderr.write('warning: unrecognized call graph entry (6): %r\n' % line)
+                sys.stderr.write(
+                    "warning: unrecognized call graph entry (6): %r\n" % line
+                )
             else:
                 parent = self.translate(mo)
-                if parent.name != '<spontaneous>':
+                if parent.name != "<spontaneous>":
                     parents.append(parent)
 
         # read cycle header line
         mo = self._cg_cycle_header_re.match(line)
         if not mo:
-            sys.stderr.write('warning: unrecognized call graph entry (4): %r\n' % line)
+            sys.stderr.write("warning: unrecognized call graph entry (4): %r\n" % line)
             return
         cycle = self.translate(mo)
 
@@ -1529,11 +1633,13 @@ class AXEParser(Parser):
         for line in lines[1:]:
             mo = self._cg_cycle_member_re.match(line)
             if not mo:
-                sys.stderr.write('warning: unrecognized call graph entry (5): %r\n' % line)
+                sys.stderr.write(
+                    "warning: unrecognized call graph entry (5): %r\n" % line
+                )
                 continue
             call = self.translate(mo)
             cycle.functions.append(call)
-        
+
         cycle.parents = parents
         self.cycles[cycle.cycle] = cycle
 
@@ -1559,17 +1665,19 @@ class AXEParser(Parser):
                 self.parse_cg_entry(entry_lines)
                 entry_lines = []
             else:
-                entry_lines.append(line)            
+                entry_lines.append(line)
             line = self.readline()
 
     def parse(self):
-        sys.stderr.write('warning: for axe format, edge weights are unreliable estimates derived from function total times.\n')
+        sys.stderr.write(
+            "warning: for axe format, edge weights are unreliable estimates derived from function total times.\n"
+        )
         self.parse_cg()
         self.fp.close()
 
         profile = Profile()
         profile[TIME] = 0.0
-        
+
         cycles = {}
         for index in self.cycles:
             cycles[index] = Cycle()
@@ -1579,7 +1687,7 @@ class AXEParser(Parser):
             function = Function(entry.index, entry.name)
             function[TIME] = entry.self
             function[TOTAL_TIME_RATIO] = entry.percentage_time / 100.0
-            
+
             # populate the function calls
             for child in entry.children:
                 call = Call(child.index)
@@ -1588,7 +1696,7 @@ class AXEParser(Parser):
                 call[TOTAL_TIME_RATIO] = function[TOTAL_TIME_RATIO]
 
                 if child.index not in self.functions:
-                    # NOTE: functions that were never called but were discovered by gprof's 
+                    # NOTE: functions that were never called but were discovered by gprof's
                     # static call graph analysis dont have a call graph entry so we need
                     # to add them here
                     # FIXME: Is this applicable?
@@ -1604,7 +1712,9 @@ class AXEParser(Parser):
                 try:
                     cycle = cycles[entry.cycle]
                 except KeyError:
-                    sys.stderr.write('warning: <cycle %u as a whole> entry missing\n' % entry.cycle) 
+                    sys.stderr.write(
+                        "warning: <cycle %u as a whole> entry missing\n" % entry.cycle
+                    )
                     cycle = Cycle()
                     cycles[entry.cycle] = cycle
                 cycle.add_function(function)
@@ -1632,12 +1742,12 @@ class AXEParser(Parser):
 
 class CallgrindParser(LineParser):
     """Parser for valgrind's callgrind tool.
-    
+
     See also:
     - http://valgrind.org/docs/manual/cl-format.html
     """
 
-    _call_re = re.compile(r'^calls=\s*(\d+)\s+((\d+|\+\d+|-\d+|\*)\s+)+$')
+    _call_re = re.compile(r"^calls=\s*(\d+)\s+((\d+|\+\d+|-\d+|\*)\s+)+$")
 
     def __init__(self, infile):
         LineParser.__init__(self, infile)
@@ -1648,7 +1758,7 @@ class CallgrindParser(LineParser):
 
         # Numeric positions
         self.num_positions = 1
-        self.cost_positions = ['line']
+        self.cost_positions = ["line"]
         self.last_positions = [0]
 
         # Events
@@ -1662,13 +1772,13 @@ class CallgrindParser(LineParser):
         # read lookahead
         self.readline()
 
-        self.parse_key('version')
-        self.parse_key('creator')
+        self.parse_key("version")
+        self.parse_key("creator")
         while self.parse_part():
             pass
         if not self.eof():
-            sys.stderr.write('warning: line %u: unexpected line\n' % self.line_no)
-            sys.stderr.write('%s\n' % self.lookahead())
+            sys.stderr.write("warning: line %u: unexpected line\n" % self.line_no)
+            sys.stderr.write("%s\n" % self.lookahead())
 
         # compute derived data
         self.profile.validate()
@@ -1691,63 +1801,64 @@ class CallgrindParser(LineParser):
         return True
 
     def parse_header_line(self):
-        return \
-            self.parse_empty() or \
-            self.parse_comment() or \
-            self.parse_part_detail() or \
-            self.parse_description() or \
-            self.parse_event_specification() or \
-            self.parse_cost_line_def() or \
-            self.parse_cost_summary()
+        return (
+            self.parse_empty()
+            or self.parse_comment()
+            or self.parse_part_detail()
+            or self.parse_description()
+            or self.parse_event_specification()
+            or self.parse_cost_line_def()
+            or self.parse_cost_summary()
+        )
 
-    _detail_keys = set(('cmd', 'pid', 'thread', 'part'))
+    _detail_keys = set(("cmd", "pid", "thread", "part"))
 
     def parse_part_detail(self):
         return self.parse_keys(self._detail_keys)
 
     def parse_description(self):
-        return self.parse_key('desc') is not None
+        return self.parse_key("desc") is not None
 
     def parse_event_specification(self):
-        event = self.parse_key('event')
+        event = self.parse_key("event")
         if event is None:
             return False
         return True
 
     def parse_cost_line_def(self):
-        pair = self.parse_keys(('events', 'positions'))
+        pair = self.parse_keys(("events", "positions"))
         if pair is None:
             return False
         key, value = pair
         items = value.split()
-        if key == 'events':
+        if key == "events":
             self.num_events = len(items)
             self.cost_events = items
-        if key == 'positions':
+        if key == "positions":
             self.num_positions = len(items)
             self.cost_positions = items
-            self.last_positions = [0]*self.num_positions
+            self.last_positions = [0] * self.num_positions
         return True
 
     def parse_cost_summary(self):
-        pair = self.parse_keys(('summary', 'totals'))
+        pair = self.parse_keys(("summary", "totals"))
         if pair is None:
             return False
         return True
 
     def parse_body_line(self):
-        return \
-            self.parse_empty() or \
-            self.parse_comment() or \
-            self.parse_cost_line() or \
-            self.parse_position_spec() or \
-            self.parse_association_spec()
+        return (
+            self.parse_empty()
+            or self.parse_comment()
+            or self.parse_cost_line()
+            or self.parse_position_spec()
+            or self.parse_association_spec()
+        )
 
-    __subpos_re = r'(0x[0-9a-fA-F]+|\d+|\+\d+|-\d+|\*)'
-    _cost_re = re.compile(r'^' + 
-        __subpos_re + r'( +' + __subpos_re + r')*' +
-        r'( +\d+)*' +
-    '$')
+    __subpos_re = r"(0x[0-9a-fA-F]+|\d+|\+\d+|-\d+|\*)"
+    _cost_re = re.compile(
+        r"^" + __subpos_re + r"( +" + __subpos_re + r")*" + r"( +\d+)*" + "$"
+    )
 
     def parse_cost_line(self, calls=None):
         line = self.lookahead().rstrip()
@@ -1762,7 +1873,7 @@ class CallgrindParser(LineParser):
             # last call object, but to the caller's object (ob), so try to
             # update it when processing a functions cost line
             try:
-                self.positions['cob'] = self.positions['ob']
+                self.positions["cob"] = self.positions["ob"]
             except KeyError:
                 pass
 
@@ -1770,16 +1881,16 @@ class CallgrindParser(LineParser):
         assert len(values) <= self.num_positions + self.num_events
 
         positions = values[0 : self.num_positions]
-        events = values[self.num_positions : ]
-        events += ['0']*(self.num_events - len(events))
+        events = values[self.num_positions :]
+        events += ["0"] * (self.num_events - len(events))
 
         for i in range(self.num_positions):
             position = positions[i]
-            if position == '*':
+            if position == "*":
                 position = self.last_positions[i]
-            elif position[0] in '-+':
+            elif position[0] in "-+":
                 position = self.last_positions[i] + int(position)
-            elif position.startswith('0x'):
+            elif position.startswith("0x"):
                 position = int(position, 16)
             else:
                 position = int(position)
@@ -1788,12 +1899,12 @@ class CallgrindParser(LineParser):
         events = [float(event) for event in events]
 
         if calls is None:
-            function[SAMPLES] += events[0] 
+            function[SAMPLES] += events[0]
             self.profile[SAMPLES] += events[0]
         else:
             callee = self.get_callee()
             callee.called += calls
-    
+
             try:
                 call = function.calls[callee.id]
             except KeyError:
@@ -1810,10 +1921,10 @@ class CallgrindParser(LineParser):
 
     def parse_association_spec(self):
         line = self.lookahead()
-        if not line.startswith('calls='):
+        if not line.startswith("calls="):
             return False
 
-        _, values = line.split('=', 1)
+        _, values = line.split("=", 1)
         values = values.strip().split()
         calls = int(values[0])
         call_position = values[1:]
@@ -1823,40 +1934,42 @@ class CallgrindParser(LineParser):
 
         return True
 
-    _position_re = re.compile(r'^(?P<position>[cj]?(?:ob|fl|fi|fe|fn))=\s*(?:\((?P<id>\d+)\))?(?:\s*(?P<name>.+))?')
+    _position_re = re.compile(
+        r"^(?P<position>[cj]?(?:ob|fl|fi|fe|fn))=\s*(?:\((?P<id>\d+)\))?(?:\s*(?P<name>.+))?"
+    )
 
     _position_table_map = {
-        'ob': 'ob',
-        'fl': 'fl',
-        'fi': 'fl',
-        'fe': 'fl',
-        'fn': 'fn',
-        'cob': 'ob',
-        'cfl': 'fl',
-        'cfi': 'fl',
-        'cfe': 'fl',
-        'cfn': 'fn',
-        'jfi': 'fl',
+        "ob": "ob",
+        "fl": "fl",
+        "fi": "fl",
+        "fe": "fl",
+        "fn": "fn",
+        "cob": "ob",
+        "cfl": "fl",
+        "cfi": "fl",
+        "cfe": "fl",
+        "cfn": "fn",
+        "jfi": "fl",
     }
 
     _position_map = {
-        'ob': 'ob',
-        'fl': 'fl',
-        'fi': 'fl',
-        'fe': 'fl',
-        'fn': 'fn',
-        'cob': 'cob',
-        'cfl': 'cfl',
-        'cfi': 'cfl',
-        'cfe': 'cfl',
-        'cfn': 'cfn',
-        'jfi': 'jfi',
+        "ob": "ob",
+        "fl": "fl",
+        "fi": "fl",
+        "fe": "fl",
+        "fn": "fn",
+        "cob": "cob",
+        "cfl": "cfl",
+        "cfi": "cfl",
+        "cfe": "cfl",
+        "cfn": "cfn",
+        "jfi": "jfi",
     }
 
     def parse_position_spec(self):
         line = self.lookahead()
-        
-        if line.startswith('jump=') or line.startswith('jcnd='):
+
+        if line.startswith("jump=") or line.startswith("jcnd="):
             self.consume()
             return True
 
@@ -1870,7 +1983,7 @@ class CallgrindParser(LineParser):
             if name:
                 self.position_ids[(table, id)] = name
             else:
-                name = self.position_ids.get((table, id), '')
+                name = self.position_ids.get((table, id), "")
         self.positions[self._position_map[position]] = name
 
         self.consume()
@@ -1887,12 +2000,12 @@ class CallgrindParser(LineParser):
 
     def parse_comment(self):
         line = self.lookahead()
-        if not line.startswith('#'):
+        if not line.startswith("#"):
             return False
         self.consume()
         return True
 
-    _key_re = re.compile(r'^(\w+):')
+    _key_re = re.compile(r"^(\w+):")
 
     def parse_key(self, key):
         pair = self.parse_keys((key,))
@@ -1906,7 +2019,7 @@ class CallgrindParser(LineParser):
         mo = self._key_re.match(line)
         if not mo:
             return None
-        key, value = line.split(':', 1)
+        key, value = line.split(":", 1)
         if key not in keys:
             return None
         value = value.strip()
@@ -1915,7 +2028,7 @@ class CallgrindParser(LineParser):
 
     def make_function(self, module, filename, name):
         # FIXME: module and filename are not being tracked reliably
-        #id = '|'.join((module, filename, name))
+        # id = '|'.join((module, filename, name))
         id = name
         try:
             function = self.profile.functions[id]
@@ -1929,22 +2042,22 @@ class CallgrindParser(LineParser):
         return function
 
     def get_function(self):
-        module = self.positions.get('ob', '')
-        filename = self.positions.get('fl', '') 
-        function = self.positions.get('fn', '') 
+        module = self.positions.get("ob", "")
+        filename = self.positions.get("fl", "")
+        function = self.positions.get("fn", "")
         return self.make_function(module, filename, function)
 
     def get_callee(self):
-        module = self.positions.get('cob', '')
-        filename = self.positions.get('cfi', '') 
-        function = self.positions.get('cfn', '') 
+        module = self.positions.get("cob", "")
+        filename = self.positions.get("cfi", "")
+        function = self.positions.get("cfn", "")
         return self.make_function(module, filename, function)
 
     def readline(self):
         # Override LineParser.readline to ignore comment lines
         while True:
             LineParser.readline(self)
-            if self.eof() or not self.lookahead().startswith('#'):
+            if self.eof() or not self.lookahead().startswith("#"):
                 break
 
 
@@ -1965,7 +2078,7 @@ class PerfParser(LineParser):
         # Override LineParser.readline to ignore comment lines
         while True:
             LineParser.readline(self)
-            if self.eof() or not self.lookahead().startswith('#'):
+            if self.eof() or not self.lookahead().startswith("#"):
                 break
 
     def parse(self):
@@ -2039,12 +2152,14 @@ class PerfParser(LineParser):
             if function is None:
                 break
             callchain.append(function)
-        if self.lookahead() == '':
+        if self.lookahead() == "":
             self.consume()
         return callchain
 
-    call_re = re.compile(r'^\s+(?P<address>[0-9a-fA-F]+)\s+(?P<symbol>.*)\s+\((?P<module>.*)\)$')
-    addr2_re = re.compile(r'\+0x[0-9a-fA-F]+$')
+    call_re = re.compile(
+        r"^\s+(?P<address>[0-9a-fA-F]+)\s+(?P<symbol>.*)\s+\((?P<module>.*)\)$"
+    )
+    addr2_re = re.compile(r"\+0x[0-9a-fA-F]+$")
 
     def parse_call(self):
         line = self.consume()
@@ -2053,18 +2168,18 @@ class PerfParser(LineParser):
         if not mo:
             return None
 
-        function_name = mo.group('symbol')
+        function_name = mo.group("symbol")
 
         # If present, amputate program counter from function name.
         if function_name:
-            function_name = re.sub(self.addr2_re, '', function_name)
+            function_name = re.sub(self.addr2_re, "", function_name)
 
-        if not function_name or function_name == '[unknown]':
-            function_name = mo.group('address')
+        if not function_name or function_name == "[unknown]":
+            function_name = mo.group("address")
 
-        module = mo.group('module')
+        module = mo.group("module")
 
-        function_id = function_name + ':' + module
+        function_id = function_name + ":" + module
 
         try:
             function = self.profile.functions[function_id]
@@ -2080,18 +2195,18 @@ class PerfParser(LineParser):
 
 class OprofileParser(LineParser):
     """Parser for oprofile callgraph output.
-    
+
     See also:
     - http://oprofile.sourceforge.net/doc/opreport.html#opreport-callgraph
     """
 
     _fields_re = {
-        'samples': r'(\d+)',
-        '%': r'(\S+)',
-        'linenr info': r'(?P<source>\(no location information\)|\S+:\d+)',
-        'image name': r'(?P<image>\S+(?:\s\(tgid:[^)]*\))?)',
-        'app name': r'(?P<application>\S+)',
-        'symbol name': r'(?P<symbol>\(no symbols\)|.+?)',
+        "samples": r"(\d+)",
+        "%": r"(\S+)",
+        "linenr info": r"(?P<source>\(no location information\)|\S+:\d+)",
+        "image name": r"(?P<image>\S+(?:\s\(tgid:[^)]*\))?)",
+        "app name": r"(?P<application>\S+)",
+        "symbol name": r"(?P<symbol>\(no symbols\)|.+?)",
     }
 
     def __init__(self, infile):
@@ -2109,7 +2224,7 @@ class OprofileParser(LineParser):
             self.update_subentries_dict(callers_total, callers)
             function_total.samples += function.samples
             self.update_subentries_dict(callees_total, callees)
-    
+
     def update_subentries_dict(self, totals, partials):
         for partial in compat_itervalues(partials):
             try:
@@ -2118,7 +2233,7 @@ class OprofileParser(LineParser):
                 totals[partial.id] = partial
             else:
                 total.samples += partial.samples
-        
+
     def parse(self):
         # read lookahead
         self.readline()
@@ -2130,7 +2245,7 @@ class OprofileParser(LineParser):
         profile = Profile()
 
         reverse_call_samples = {}
-        
+
         # populate the profile
         profile[SAMPLES] = 0
         for _callers, _function, _callees in compat_itervalues(self.entries):
@@ -2153,7 +2268,7 @@ class OprofileParser(LineParser):
                     call = Call(_callee.id)
                     call[SAMPLES2] = _callee.samples
                     function.add_call(call)
-                
+
         # compute derived data
         profile.validate()
         profile.find_cycles()
@@ -2167,8 +2282,12 @@ class OprofileParser(LineParser):
         while not self.match_header():
             self.consume()
         line = self.lookahead()
-        fields = re.split(r'\s\s+', line)
-        entry_re = r'^\s*' + r'\s+'.join([self._fields_re[field] for field in fields]) + r'(?P<self>\s+\[self\])?$'
+        fields = re.split(r"\s\s+", line)
+        entry_re = (
+            r"^\s*"
+            + r"\s+".join([self._fields_re[field] for field in fields])
+            + r"(?P<self>\s+\[self\])?$"
+        )
         self.entry_re = re.compile(entry_re)
         self.skip_separator()
 
@@ -2193,30 +2312,30 @@ class OprofileParser(LineParser):
         line = self.consume()
         mo = self.entry_re.match(line)
         if not mo:
-            raise ParseError('failed to parse', line)
+            raise ParseError("failed to parse", line)
         fields = mo.groupdict()
         entry.samples = int(mo.group(1))
-        if 'source' in fields and fields['source'] != '(no location information)':
-            source = fields['source']
-            filename, lineno = source.split(':')
+        if "source" in fields and fields["source"] != "(no location information)":
+            source = fields["source"]
+            filename, lineno = source.split(":")
             entry.filename = filename
             entry.lineno = int(lineno)
         else:
-            source = ''
+            source = ""
             entry.filename = None
             entry.lineno = None
-        entry.image = fields.get('image', '')
-        entry.application = fields.get('application', '')
-        if 'symbol' in fields and fields['symbol'] != '(no symbols)':
-            entry.symbol = fields['symbol']
+        entry.image = fields.get("image", "")
+        entry.application = fields.get("application", "")
+        if "symbol" in fields and fields["symbol"] != "(no symbols)":
+            entry.symbol = fields["symbol"]
         else:
-            entry.symbol = ''
+            entry.symbol = ""
         if entry.symbol.startswith('"') and entry.symbol.endswith('"'):
             entry.symbol = entry.symbol[1:-1]
-        entry.id = ':'.join((entry.application, entry.image, source, entry.symbol))
-        entry.self = fields.get('self', None) != None
+        entry.id = ":".join((entry.application, entry.image, source, entry.symbol))
+        entry.self = fields.get("self", None) != None
         if entry.self:
-            entry.id += ':self'
+            entry.id += ":self"
         if entry.symbol:
             entry.name = entry.symbol
         else:
@@ -2230,16 +2349,16 @@ class OprofileParser(LineParser):
 
     def match_header(self):
         line = self.lookahead()
-        return line.startswith('samples')
+        return line.startswith("samples")
 
     def match_separator(self):
         line = self.lookahead()
-        return line == '-'*len(line)
+        return line == "-" * len(line)
 
     def match_primary(self):
         line = self.lookahead()
         return not line[:1].isspace()
-    
+
     def match_secondary(self):
         line = self.lookahead()
         return line[:1].isspace()
@@ -2247,13 +2366,13 @@ class OprofileParser(LineParser):
 
 class HProfParser(LineParser):
     """Parser for java hprof output
-    
+
     See also:
     - http://java.sun.com/developer/technicalArticles/Programming/HPROF.html
     """
 
-    trace_re = re.compile(r'\t(.*)\((.*):(.*)\)')
-    trace_id_re = re.compile(r'^TRACE (\d+):$')
+    trace_re = re.compile(r"\t(.*)\((.*):(.*)\)")
+    trace_id_re = re.compile(r"^TRACE (\d+):$")
 
     def __init__(self, infile):
         LineParser.__init__(self, infile)
@@ -2264,12 +2383,14 @@ class HProfParser(LineParser):
         # read lookahead
         self.readline()
 
-        while not self.lookahead().startswith('------'): self.consume()
-        while not self.lookahead().startswith('TRACE '): self.consume()
+        while not self.lookahead().startswith("------"):
+            self.consume()
+        while not self.lookahead().startswith("TRACE "):
+            self.consume()
 
         self.parse_traces()
 
-        while not self.lookahead().startswith('CPU'):
+        while not self.lookahead().startswith("CPU"):
             self.consume()
 
         self.parse_samples()
@@ -2282,7 +2403,8 @@ class HProfParser(LineParser):
 
         # build up callgraph
         for id, trace in compat_iteritems(self.traces):
-            if not id in self.samples: continue
+            if not id in self.samples:
+                continue
             mtime = self.samples[id][0]
             last = None
 
@@ -2314,7 +2436,7 @@ class HProfParser(LineParser):
         return profile
 
     def parse_traces(self):
-        while self.lookahead().startswith('TRACE '):
+        while self.lookahead().startswith("TRACE "):
             self.parse_trace()
 
     def parse_trace(self):
@@ -2324,11 +2446,11 @@ class HProfParser(LineParser):
         last = None
         trace = []
 
-        while self.lookahead().startswith('\t'):
+        while self.lookahead().startswith("\t"):
             l = self.consume()
             match = self.trace_re.search(l)
             if not match:
-                #sys.stderr.write('Invalid line: %s\n' % l)
+                # sys.stderr.write('Invalid line: %s\n' % l)
                 break
             else:
                 function_name, file, line = match.groups()
@@ -2340,14 +2462,20 @@ class HProfParser(LineParser):
         self.consume()
         self.consume()
 
-        while not self.lookahead().startswith('CPU'):
-            rank, percent_self, percent_accum, count, traceid, method = self.lookahead().split()
+        while not self.lookahead().startswith("CPU"):
+            (
+                rank,
+                percent_self,
+                percent_accum,
+                count,
+                traceid,
+                method,
+            ) = self.lookahead().split()
             self.samples[int(traceid)] = (int(count), method)
             self.consume()
 
 
 class SysprofParser(XmlParser):
-
     def __init__(self, stream):
         XmlParser.__init__(self, stream)
 
@@ -2355,22 +2483,22 @@ class SysprofParser(XmlParser):
         objects = {}
         nodes = {}
 
-        self.element_start('profile')
+        self.element_start("profile")
         while self.token.type == XML_ELEMENT_START:
-            if self.token.name_or_data == 'objects':
+            if self.token.name_or_data == "objects":
                 assert not objects
-                objects = self.parse_items('objects')
-            elif self.token.name_or_data == 'nodes':
+                objects = self.parse_items("objects")
+            elif self.token.name_or_data == "nodes":
                 assert not nodes
-                nodes = self.parse_items('nodes')
+                nodes = self.parse_items("nodes")
             else:
                 self.parse_value(self.token.name_or_data)
-        self.element_end('profile')
+        self.element_end("profile")
 
         return self.build_profile(objects, nodes)
 
     def parse_items(self, name):
-        assert name[-1] == 's'
+        assert name[-1] == "s"
         items = {}
         self.element_start(name)
         while self.token.type == XML_ELEMENT_START:
@@ -2382,7 +2510,7 @@ class SysprofParser(XmlParser):
 
     def parse_item(self, name):
         attrs = self.element_start(name)
-        id = int(attrs['id'])
+        id = int(attrs["id"])
         values = self.parse_values()
         self.element_end(name)
         return id, values
@@ -2408,42 +2536,42 @@ class SysprofParser(XmlParser):
 
     def build_profile(self, objects, nodes):
         profile = Profile()
-        
+
         profile[SAMPLES] = 0
         for id, object in compat_iteritems(objects):
             # Ignore fake objects (process names, modules, "Everything", "kernel", etc.)
-            if object['self'] == 0:
+            if object["self"] == 0:
                 continue
 
-            function = Function(id, object['name'])
-            function[SAMPLES] = object['self']
+            function = Function(id, object["name"])
+            function[SAMPLES] = object["self"]
             profile.add_function(function)
             profile[SAMPLES] += function[SAMPLES]
 
         for id, node in compat_iteritems(nodes):
             # Ignore fake calls
-            if node['self'] == 0:
+            if node["self"] == 0:
                 continue
 
             # Find a non-ignored parent
-            parent_id = node['parent']
+            parent_id = node["parent"]
             while parent_id != 0:
                 parent = nodes[parent_id]
-                caller_id = parent['object']
-                if objects[caller_id]['self'] != 0:
+                caller_id = parent["object"]
+                if objects[caller_id]["self"] != 0:
                     break
-                parent_id = parent['parent']
+                parent_id = parent["parent"]
             if parent_id == 0:
                 continue
 
-            callee_id = node['object']
+            callee_id = node["object"]
 
-            assert objects[caller_id]['self']
-            assert objects[callee_id]['self']
+            assert objects[caller_id]["self"]
+            assert objects[callee_id]["self"]
 
             function = profile.functions[caller_id]
 
-            samples = node['self']
+            samples = node["self"]
             try:
                 call = function.calls[callee_id]
             except KeyError:
@@ -2464,8 +2592,7 @@ class SysprofParser(XmlParser):
 
 
 class XPerfParser(Parser):
-    """Parser for CSVs generted by XPerf, from Microsoft Windows Performance Tools.
-    """
+    """Parser for CSVs generted by XPerf, from Microsoft Windows Performance Tools."""
 
     def __init__(self, stream):
         Parser.__init__(self)
@@ -2476,15 +2603,17 @@ class XPerfParser(Parser):
 
     def parse(self):
         import csv
+
         reader = csv.reader(
-            self.stream, 
-            delimiter = ',',
-            quotechar = None,
-            escapechar = None,
-            doublequote = False,
-            skipinitialspace = True,
-            lineterminator = '\r\n',
-            quoting = csv.QUOTE_NONE)
+            self.stream,
+            delimiter=",",
+            quotechar=None,
+            escapechar=None,
+            doublequote=False,
+            skipinitialspace=True,
+            lineterminator="\r\n",
+            quoting=csv.QUOTE_NONE,
+        )
         header = True
         for row in reader:
             if header:
@@ -2492,7 +2621,7 @@ class XPerfParser(Parser):
                 header = False
             else:
                 self.parse_row(row)
-                
+
         # compute derived data
         self.profile.validate()
         self.profile.find_cycles()
@@ -2520,23 +2649,23 @@ class XPerfParser(Parser):
                 else:
                     break
             fields[name] = value
-        
-        process = fields['Process Name']
-        symbol = fields['Module'] + '!' + fields['Function']
-        weight = fields['Weight']
-        count = fields['Count']
 
-        if process == 'Idle':
+        process = fields["Process Name"]
+        symbol = fields["Module"] + "!" + fields["Function"]
+        weight = fields["Weight"]
+        count = fields["Count"]
+
+        if process == "Idle":
             return
 
         function = self.get_function(process, symbol)
         function[SAMPLES] += weight * count
         self.profile[SAMPLES] += weight * count
 
-        stack = fields['Stack']
-        if stack != '?':
-            stack = stack.split('/')
-            assert stack[0] == '[Root]'
+        stack = fields["Stack"]
+        if stack != "?":
+            stack = stack.split("/")
+            assert stack[0] == "[Root]"
             if stack[-1] != symbol:
                 # XXX: some cases the sampled function does not appear in the stack
                 stack.append(symbol)
@@ -2555,12 +2684,12 @@ class XPerfParser(Parser):
                 caller = callee
 
     def get_function(self, process, symbol):
-        function_id = process + '!' + symbol
+        function_id = process + "!" + symbol
 
         try:
             function = self.profile.functions[function_id]
         except KeyError:
-            module, name = symbol.split('!', 1)
+            module, name = symbol.split("!", 1)
             function = Function(function_id, name)
             function.process = process
             function.module = module
@@ -2591,13 +2720,13 @@ class SleepyParser(Parser):
         self.calls = {}
 
         self.profile = Profile()
-    
+
     _symbol_re = re.compile(
-        r'^(?P<id>\w+)' + 
-        r'\s+"(?P<module>[^"]*)"' + 
-        r'\s+"(?P<procname>[^"]*)"' + 
-        r'\s+"(?P<sourcefile>[^"]*)"' + 
-        r'\s+(?P<sourceline>\d+)$'
+        r"^(?P<id>\w+)"
+        + r'\s+"(?P<module>[^"]*)"'
+        + r'\s+"(?P<procname>[^"]*)"'
+        + r'\s+"(?P<sourcefile>[^"]*)"'
+        + r"\s+(?P<sourceline>\d+)$"
     )
 
     def openEntry(self, name):
@@ -2607,17 +2736,17 @@ class SleepyParser(Parser):
                 name = database_name
                 break
 
-        return self.database.open(name, 'r')
+        return self.database.open(name, "r")
 
     def parse_symbols(self):
-        for line in self.openEntry('Symbols.txt'):
-            line = line.decode('UTF-8').rstrip('\r\n')
+        for line in self.openEntry("Symbols.txt"):
+            line = line.decode("UTF-8").rstrip("\r\n")
 
             mo = self._symbol_re.match(line)
             if mo:
                 symbol_id, module, procname, sourcefile, sourceline = mo.groups()
-    
-                function_id = ':'.join([module, procname])
+
+                function_id = ":".join([module, procname])
 
                 try:
                     function = self.profile.functions[function_id]
@@ -2630,8 +2759,8 @@ class SleepyParser(Parser):
                 self.symbols[symbol_id] = function
 
     def parse_callstacks(self):
-        for line in self.openEntry('Callstacks.txt'):
-            line = line.decode('UTF-8').rstrip('\r\n')
+        for line in self.openEntry("Callstacks.txt"):
+            line = line.decode("UTF-8").rstrip("\r\n")
 
             fields = line.split()
             samples = float(fields[0])
@@ -2643,7 +2772,7 @@ class SleepyParser(Parser):
 
             callee[SAMPLES] += samples
             self.profile[SAMPLES] += samples
-            
+
             for caller in callstack[1:]:
                 try:
                     call = caller.calls[callee.id]
@@ -2681,13 +2810,15 @@ class PstatsParser:
 
     def __init__(self, *filename):
         import pstats
+
         try:
             self.stats = pstats.Stats(*filename)
         except ValueError:
             if PYTHON_3:
-                sys.stderr.write('error: failed to load %s\n' % ', '.join(filename))
+                sys.stderr.write("error: failed to load %s\n" % ", ".join(filename))
                 sys.exit(1)
             import hotshot.stats
+
             self.stats = hotshot.stats.load(filename[0])
         self.profile = Profile()
         self.function_ids = {}
@@ -2727,7 +2858,7 @@ class PstatsParser:
                 call = Call(callee.id)
                 if isinstance(value, tuple):
                     for i in xrange(0, len(value), 4):
-                        nc, cc, tt, ct = value[i:i+4]
+                        nc, cc, tt, ct = value[i : i + 4]
                         if CALLS in call:
                             call[CALLS] += cc
                         else:
@@ -2740,7 +2871,7 @@ class PstatsParser:
 
                 else:
                     call[CALLS] = value
-                    call[TOTAL_TIME] = ratio(value, nc)*ct
+                    call[TOTAL_TIME] = ratio(value, nc) * ct
 
                 caller.add_call(call)
 
@@ -2755,15 +2886,16 @@ class PstatsParser:
 
         return self.profile
 
+
 class DtraceParser(LineParser):
     """Parser for linux perf callgraph output.
 
     It expects output generated with
-        
+
         # Refer to https://github.com/brendangregg/FlameGraph#dtrace
-        # 60 seconds of user-level stacks, including time spent in-kernel, for PID 12345 at 97 Hertz     
+        # 60 seconds of user-level stacks, including time spent in-kernel, for PID 12345 at 97 Hertz
         sudo dtrace -x ustackframes=100 -n 'profile-97 /pid == 12345/ { @[ustack()] = count(); } tick-60s { exit(0); }' -o out.user_stacks
-        
+
         # The dtrace output
         gprof2dot.py -f dtrace out.user_stacks
 
@@ -2785,15 +2917,14 @@ class DtraceParser(LineParser):
                 break
 
             line = self.lookahead().strip()
-            if line.startswith('CPU'):
+            if line.startswith("CPU"):
                 # The format likes:
                 # CPU     ID                    FUNCTION:NAME
-                #   1  29684                        :tick-60s 
+                #   1  29684                        :tick-60s
                 # Skip next line
                 LineParser.readline(self)
-            elif not line == '':
+            elif not line == "":
                 break
-
 
     def parse(self):
         # read lookahead
@@ -2856,7 +2987,6 @@ class DtraceParser(LineParser):
         for function in stack:
             function[TOTAL_SAMPLES] += count
 
-
     def parse_callchain(self):
         callchain = []
         count = 0
@@ -2867,8 +2997,8 @@ class DtraceParser(LineParser):
             callchain.append(function)
         return callchain, count
 
-    call_re = re.compile(r'^\s+(?P<module>.*)`(?P<symbol>.*)')
-    addr2_re = re.compile(r'\+0x[0-9a-fA-F]+$')
+    call_re = re.compile(r"^\s+(?P<module>.*)`(?P<symbol>.*)")
+    addr2_re = re.compile(r"\+0x[0-9a-fA-F]+$")
 
     def parse_call(self):
         line = self.consume()
@@ -2877,18 +3007,18 @@ class DtraceParser(LineParser):
             # The line must be the stack count
             return None, int(line.strip())
 
-        function_name = mo.group('symbol')
+        function_name = mo.group("symbol")
 
         # If present, amputate program counter from function name.
         if function_name:
-            function_name = re.sub(self.addr2_re, '', function_name)
+            function_name = re.sub(self.addr2_re, "", function_name)
 
         # if not function_name or function_name == '[unknown]':
         #     function_name = mo.group('address')
 
-        module = mo.group('module')
+        module = mo.group("module")
 
-        function_id = function_name + ':' + module
+        function_id = function_name + ":" + module
 
         try:
             function = self.profile.functions[function_id]
@@ -2900,6 +3030,7 @@ class DtraceParser(LineParser):
             self.profile.add_function(function)
 
         return function, None
+
 
 formats = {
     "axe": AXEParser,
@@ -2922,20 +3053,21 @@ formats = {
 
 
 class Theme:
-
-    def __init__(self, 
-            bgcolor = (0.0, 0.0, 1.0),
-            mincolor = (0.0, 0.0, 0.0),
-            maxcolor = (0.0, 0.0, 1.0),
-            fontname = "Arial",
-            fontcolor = "white",
-            nodestyle = "filled",
-            minfontsize = 10.0,
-            maxfontsize = 10.0,
-            minpenwidth = 0.5,
-            maxpenwidth = 4.0,
-            gamma = 2.2,
-            skew = 1.0):
+    def __init__(
+        self,
+        bgcolor=(0.0, 0.0, 1.0),
+        mincolor=(0.0, 0.0, 0.0),
+        maxcolor=(0.0, 0.0, 1.0),
+        fontname="Arial",
+        fontcolor="white",
+        nodestyle="filled",
+        minfontsize=10.0,
+        maxfontsize=10.0,
+        minpenwidth=0.5,
+        maxpenwidth=4.0,
+        gamma=2.2,
+        skew=1.0,
+    ):
         self.bgcolor = bgcolor
         self.mincolor = mincolor
         self.maxcolor = maxcolor
@@ -2983,31 +3115,31 @@ class Theme:
         return self.fontsize(weight)
 
     def edge_penwidth(self, weight):
-        return max(weight*self.maxpenwidth, self.minpenwidth)
+        return max(weight * self.maxpenwidth, self.minpenwidth)
 
     def edge_arrowsize(self, weight):
         return 0.5 * math.sqrt(self.edge_penwidth(weight))
 
     def fontsize(self, weight):
-        return max(weight**2 * self.maxfontsize, self.minfontsize)
+        return max(weight ** 2 * self.maxfontsize, self.minfontsize)
 
     def color(self, weight):
         weight = min(max(weight, 0.0), 1.0)
-    
+
         hmin, smin, lmin = self.mincolor
         hmax, smax, lmax = self.maxcolor
-        
+
         if self.skew < 0:
             raise ValueError("Skew must be greater than 0")
         elif self.skew == 1.0:
-            h = hmin + weight*(hmax - hmin)
-            s = smin + weight*(smax - smin)
-            l = lmin + weight*(lmax - lmin)
+            h = hmin + weight * (hmax - hmin)
+            s = smin + weight * (smax - smin)
+            l = lmin + weight * (lmax - lmin)
         else:
             base = self.skew
-            h = hmin + ((hmax-hmin)*(-1.0 + (base ** weight)) / (base - 1.0))
-            s = smin + ((smax-smin)*(-1.0 + (base ** weight)) / (base - 1.0))
-            l = lmin + ((lmax-lmin)*(-1.0 + (base ** weight)) / (base - 1.0))
+            h = hmin + ((hmax - hmin) * (-1.0 + (base ** weight)) / (base - 1.0))
+            s = smin + ((smax - smin) * (-1.0 + (base ** weight)) / (base - 1.0))
+            l = lmin + ((lmax - lmin) * (-1.0 + (base ** weight)) / (base - 1.0))
 
         return self.hsl_to_rgb(h, s, l)
 
@@ -3023,13 +3155,13 @@ class Theme:
         l = min(max(l, 0.0), 1.0)
 
         if l <= 0.5:
-            m2 = l*(s + 1.0)
+            m2 = l * (s + 1.0)
         else:
-            m2 = l + s - l*s
-        m1 = l*2.0 - m2
-        r = self._hue_to_rgb(m1, m2, h + 1.0/3.0)
+            m2 = l + s - l * s
+        m1 = l * 2.0 - m2
+        r = self._hue_to_rgb(m1, m2, h + 1.0 / 3.0)
         g = self._hue_to_rgb(m1, m2, h)
-        b = self._hue_to_rgb(m1, m2, h - 1.0/3.0)
+        b = self._hue_to_rgb(m1, m2, h - 1.0 / 3.0)
 
         # Apply gamma correction
         r **= self.gamma
@@ -3043,52 +3175,57 @@ class Theme:
             h += 1.0
         elif h > 1.0:
             h -= 1.0
-        if h*6 < 1.0:
-            return m1 + (m2 - m1)*h*6.0
-        elif h*2 < 1.0:
+        if h * 6 < 1.0:
+            return m1 + (m2 - m1) * h * 6.0
+        elif h * 2 < 1.0:
             return m2
-        elif h*3 < 2.0:
-            return m1 + (m2 - m1)*(2.0/3.0 - h)*6.0
+        elif h * 3 < 2.0:
+            return m1 + (m2 - m1) * (2.0 / 3.0 - h) * 6.0
         else:
             return m1
 
 
 TEMPERATURE_COLORMAP = Theme(
-    mincolor = (2.0/3.0, 0.80, 0.25), # dark blue
-    maxcolor = (0.0, 1.0, 0.5), # satured red
-    gamma = 1.0
+    mincolor=(2.0 / 3.0, 0.80, 0.25),  # dark blue
+    maxcolor=(0.0, 1.0, 0.5),  # satured red
+    gamma=1.0,
 )
 
 PINK_COLORMAP = Theme(
-    mincolor = (0.0, 1.0, 0.90), # pink
-    maxcolor = (0.0, 1.0, 0.5), # satured red
+    mincolor=(0.0, 1.0, 0.90),  # pink
+    maxcolor=(0.0, 1.0, 0.5),  # satured red
 )
 
 GRAY_COLORMAP = Theme(
-    mincolor = (0.0, 0.0, 0.85), # light gray
-    maxcolor = (0.0, 0.0, 0.0), # black
+    mincolor=(0.0, 0.0, 0.85),  # light gray
+    maxcolor=(0.0, 0.0, 0.0),  # black
 )
 
 BW_COLORMAP = Theme(
-    minfontsize = 8.0,
-    maxfontsize = 24.0,
-    mincolor = (0.0, 0.0, 0.0), # black
-    maxcolor = (0.0, 0.0, 0.0), # black
-    minpenwidth = 0.1,
-    maxpenwidth = 8.0,
+    minfontsize=8.0,
+    maxfontsize=24.0,
+    mincolor=(0.0, 0.0, 0.0),  # black
+    maxcolor=(0.0, 0.0, 0.0),  # black
+    minpenwidth=0.1,
+    maxpenwidth=8.0,
 )
 
 PRINT_COLORMAP = Theme(
-    minfontsize = 18.0,
-    maxfontsize = 30.0,
-    fontcolor = "black",
-    nodestyle = "solid",
-    mincolor = (0.0, 0.0, 0.0), # black
-    maxcolor = (0.0, 0.0, 0.0), # black
-    minpenwidth = 0.1,
-    maxpenwidth = 8.0,
+    minfontsize=18.0,
+    maxfontsize=30.0,
+    fontcolor="black",
+    nodestyle="solid",
+    mincolor=(0.0, 0.0, 0.0),  # black
+    maxcolor=(0.0, 0.0, 0.0),  # black
+    minpenwidth=0.1,
+    maxpenwidth=8.0,
 )
 
+GREEN_TO_RED_COLORMAP = Theme(
+    mincolor=(115 / 360, 0.5, 0.65),
+    maxcolor=(0, 0.5, 0.35),
+    gamma=1,
+)
 
 themes = {
     "color": TEMPERATURE_COLORMAP,
@@ -3096,6 +3233,7 @@ themes = {
     "gray": GRAY_COLORMAP,
     "bw": BW_COLORMAP,
     "print": PRINT_COLORMAP,
+    "g2r": GREEN_TO_RED_COLORMAP,
 }
 
 
@@ -3126,16 +3264,16 @@ class DotWriter:
         """Split the function name on multiple lines."""
 
         if len(name) > 32:
-            ratio = 2.0/3.0
-            height = max(int(len(name)/(1.0 - ratio) + 0.5), 1)
-            width = max(len(name)/height, 32)
+            ratio = 2.0 / 3.0
+            height = max(int(len(name) / (1.0 - ratio) + 0.5), 1)
+            width = max(len(name) / height, 32)
             # TODO: break lines in symbols
             name = textwrap.fill(name, width, break_long_words=False)
 
         # Take away spaces
         name = name.replace(", ", ",")
         name = name.replace("> >", ">>")
-        name = name.replace("> >", ">>") # catch consecutive
+        name = name.replace("> >", ">>")  # catch consecutive
 
         return name
 
@@ -3149,9 +3287,17 @@ class DotWriter:
         fontcolor = theme.graph_fontcolor()
         nodestyle = theme.node_style()
 
-        self.attr('graph', fontname=fontname, ranksep=0.25, nodesep=0.125)
-        self.attr('node', fontname=fontname, shape="box", style=nodestyle, fontcolor=fontcolor, width=0, height=0)
-        self.attr('edge', fontname=fontname)
+        self.attr("graph", fontname=fontname, ranksep=0.25, nodesep=0.125)
+        self.attr(
+            "node",
+            fontname=fontname,
+            shape="box",
+            style=nodestyle,
+            fontcolor=fontcolor,
+            width=0,
+            height=0,
+        )
+        self.attr("edge", fontname=fontname)
 
         for _, function in sorted_iteritems(profile.functions):
             labels = []
@@ -3170,8 +3316,11 @@ class DotWriter:
             # https://github.com/jrfonseca/gprof2dot/issues/30) can exceed that
             MAX_FUNCTION_NAME = 4096
             if len(function_name) >= MAX_FUNCTION_NAME:
-                sys.stderr.write('warning: truncating function name with %u chars (%s)\n' % (len(function_name), function_name[:32] + '...'))
-                function_name = function_name[:MAX_FUNCTION_NAME - 1] + unichr(0x2026)
+                sys.stderr.write(
+                    "warning: truncating function name with %u chars (%s)\n"
+                    % (len(function_name), function_name[:32] + "...")
+                )
+                function_name = function_name[: MAX_FUNCTION_NAME - 1] + unichr(0x2026)
 
             if self.wrap:
                 function_name = self.wrap_function_name(function_name)
@@ -3189,13 +3338,14 @@ class DotWriter:
             else:
                 weight = 0.0
 
-            label = '\n'.join(labels)
-            self.node(function.id, 
-                label = label, 
-                color = self.color(theme.node_bgcolor(weight)), 
-                fontcolor = self.color(theme.node_fgcolor(weight)), 
-                fontsize = "%.2f" % theme.node_fontsize(weight),
-                tooltip = function.filename,
+            label = "\n".join(labels)
+            self.node(
+                function.id,
+                label=label,
+                color=self.color(theme.node_bgcolor(weight)),
+                fontcolor=self.color(theme.node_fgcolor(weight)),
+                fontsize="%.2f" % theme.node_fontsize(weight),
+                tooltip=function.filename,
             )
 
             for _, call in sorted_iteritems(function.calls):
@@ -3214,25 +3364,27 @@ class DotWriter:
                 else:
                     weight = 0.0
 
-                label = '\n'.join(labels)
+                label = "\n".join(labels)
 
-                self.edge(function.id, call.callee_id, 
-                    label = label, 
-                    color = self.color(theme.edge_color(weight)), 
-                    fontcolor = self.color(theme.edge_color(weight)),
-                    fontsize = "%.2f" % theme.edge_fontsize(weight), 
-                    penwidth = "%.2f" % theme.edge_penwidth(weight), 
-                    labeldistance = "%.2f" % theme.edge_penwidth(weight), 
-                    arrowsize = "%.2f" % theme.edge_arrowsize(weight),
+                self.edge(
+                    function.id,
+                    call.callee_id,
+                    label=label,
+                    color=self.color(theme.edge_color(weight)),
+                    fontcolor=self.color(theme.edge_color(weight)),
+                    fontsize="%.2f" % theme.edge_fontsize(weight),
+                    penwidth="%.2f" % theme.edge_penwidth(weight),
+                    labeldistance="%.2f" % theme.edge_penwidth(weight),
+                    arrowsize="%.2f" % theme.edge_arrowsize(weight),
                 )
 
         self.end_graph()
 
     def begin_graph(self):
-        self.write('digraph {\n')
+        self.write("digraph {\n")
 
     def end_graph(self):
-        self.write('}\n')
+        self.write("}\n")
 
     def attr(self, what, **attrs):
         self.write("\t")
@@ -3257,7 +3409,7 @@ class DotWriter:
     def attr_list(self, attrs):
         if not attrs:
             return
-        self.write(' [')
+        self.write(" [")
         first = True
         for name, value in sorted_iteritems(attrs):
             if value is None:
@@ -3267,15 +3419,15 @@ class DotWriter:
             else:
                 self.write(", ")
             self.id(name)
-            self.write('=')
+            self.write("=")
             self.id(value)
-        self.write(']')
+        self.write("]")
 
     def id(self, id):
         if isinstance(id, (int, float)):
             s = str(id)
         elif isinstance(id, basestring):
-            if id.isalnum() and not id.startswith('0x'):
+            if id.isalnum() and not id.startswith("0x"):
                 s = id
             else:
                 s = self.escape(id)
@@ -3291,22 +3443,21 @@ class DotWriter:
                 return 0
             if f >= 1.0:
                 return 255
-            return int(255.0*f + 0.5)
+            return int(255.0 * f + 0.5)
 
         return "#" + "".join(["%02x" % float2int(c) for c in (r, g, b)])
 
     def escape(self, s):
         if not PYTHON_3:
-            s = s.encode('utf-8')
-        s = s.replace('\\', r'\\')
-        s = s.replace('\n', r'\n')
-        s = s.replace('\t', r'\t')
-        s = s.replace('"', r'\"')
+            s = s.encode("utf-8")
+        s = s.replace("\\", r"\\")
+        s = s.replace("\n", r"\n")
+        s = s.replace("\t", r"\t")
+        s = s.replace('"', r"\"")
         return '"' + s + '"'
 
     def write(self, s):
         self.fp.write(s)
-
 
 
 ########################################################################
@@ -3315,10 +3466,10 @@ class DotWriter:
 
 def naturalJoin(values):
     if len(values) >= 2:
-        return ', '.join(values[:-1]) + ' or ' + values[-1]
+        return ", ".join(values[:-1]) + " or " + values[-1]
 
     else:
-        return ''.join(values)
+        return "".join(values)
 
 
 def main(argv=sys.argv[1:]):
@@ -3335,102 +3486,155 @@ def main(argv=sys.argv[1:]):
     labelNames = list(labels.keys())
     labelNames.sort()
 
-    optparser = optparse.OptionParser(
-        usage="\n\t%prog [options] [file] ...")
+    optparser = optparse.OptionParser(usage="\n\t%prog [options] [file] ...")
     optparser.add_option(
-        '-o', '--output', metavar='FILE',
-        type="string", dest="output",
-        help="output filename [stdout]")
+        "-o",
+        "--output",
+        metavar="FILE",
+        type="string",
+        dest="output",
+        help="output filename [stdout]",
+    )
     optparser.add_option(
-        '-n', '--node-thres', metavar='PERCENTAGE',
-        type="float", dest="node_thres", default=0.5,
-        help="eliminate nodes below this threshold [default: %default]")
+        "-n",
+        "--node-thres",
+        metavar="PERCENTAGE",
+        type="float",
+        dest="node_thres",
+        default=0.5,
+        help="eliminate nodes below this threshold [default: %default]",
+    )
     optparser.add_option(
-        '-e', '--edge-thres', metavar='PERCENTAGE',
-        type="float", dest="edge_thres", default=0.1,
-        help="eliminate edges below this threshold [default: %default]")
+        "-e",
+        "--edge-thres",
+        metavar="PERCENTAGE",
+        type="float",
+        dest="edge_thres",
+        default=0.1,
+        help="eliminate edges below this threshold [default: %default]",
+    )
     optparser.add_option(
-        '-f', '--format',
-        type="choice", choices=formatNames,
-        dest="format", default="prof",
-        help="profile format: %s [default: %%default]" % naturalJoin(formatNames))
+        "-f",
+        "--format",
+        type="choice",
+        choices=formatNames,
+        dest="format",
+        default="prof",
+        help="profile format: %s [default: %%default]" % naturalJoin(formatNames),
+    )
     optparser.add_option(
-        '--total',
-        type="choice", choices=('callratios', 'callstacks'),
-        dest="totalMethod", default=totalMethod,
-        help="preferred method of calculating total time: callratios or callstacks (currently affects only perf format) [default: %default]")
+        "--total",
+        type="choice",
+        choices=("callratios", "callstacks"),
+        dest="totalMethod",
+        default=totalMethod,
+        help="preferred method of calculating total time: callratios or callstacks (currently affects only perf format) [default: %default]",
+    )
     optparser.add_option(
-        '-c', '--colormap',
-        type="choice", choices=themeNames,
-        dest="theme", default="color",
-        help="color map: %s [default: %%default]" % naturalJoin(themeNames))
+        "-c",
+        "--colormap",
+        type="choice",
+        choices=themeNames,
+        dest="theme",
+        default="color",
+        help="color map: %s [default: %%default]" % naturalJoin(themeNames),
+    )
     optparser.add_option(
-        '-s', '--strip',
+        "-s",
+        "--strip",
         action="store_true",
-        dest="strip", default=False,
-        help="strip function parameters, template parameters, and const modifiers from demangled C++ function names")
+        dest="strip",
+        default=False,
+        help="strip function parameters, template parameters, and const modifiers from demangled C++ function names",
+    )
     optparser.add_option(
-        '--color-nodes-by-selftime',
-        action="store_true",
-        dest="color_nodes_by_selftime", default=False,
-        help="color nodes by self time, rather than by total time (sum of self and descendants)")
-    optparser.add_option(
-        '--colour-nodes-by-selftime',
+        "--color-nodes-by-selftime",
         action="store_true",
         dest="color_nodes_by_selftime",
-        help=optparse.SUPPRESS_HELP)
+        default=False,
+        help="color nodes by self time, rather than by total time (sum of self and descendants)",
+    )
     optparser.add_option(
-        '-w', '--wrap',
+        "--colour-nodes-by-selftime",
         action="store_true",
-        dest="wrap", default=False,
-        help="wrap function names")
+        dest="color_nodes_by_selftime",
+        help=optparse.SUPPRESS_HELP,
+    )
     optparser.add_option(
-        '--show-samples',
+        "-w",
+        "--wrap",
         action="store_true",
-        dest="show_samples", default=False,
-        help="show function samples")
+        dest="wrap",
+        default=False,
+        help="wrap function names",
+    )
     optparser.add_option(
-        '--node-label', metavar='MEASURE',
-        type='choice', choices=labelNames,
-        action='append',
-        dest='node_labels',
-        help="measurements to on show the node (can be specified multiple times): %s [default: %s]" % (
-            naturalJoin(labelNames), ', '.join(defaultLabelNames)))
+        "--show-samples",
+        action="store_true",
+        dest="show_samples",
+        default=False,
+        help="show function samples",
+    )
+    optparser.add_option(
+        "--node-label",
+        metavar="MEASURE",
+        type="choice",
+        choices=labelNames,
+        action="append",
+        dest="node_labels",
+        help="measurements to on show the node (can be specified multiple times): %s [default: %s]"
+        % (naturalJoin(labelNames), ", ".join(defaultLabelNames)),
+    )
     # add option to create subtree or show paths
     optparser.add_option(
-        '-z', '--root',
+        "-z",
+        "--root",
         type="string",
-        dest="root", default="",
-        help="prune call graph to show only descendants of specified root function")
+        dest="root",
+        default="",
+        help="prune call graph to show only descendants of specified root function",
+    )
     optparser.add_option(
-        '-l', '--leaf',
+        "-l",
+        "--leaf",
         type="string",
-        dest="leaf", default="",
-        help="prune call graph to show only ancestors of specified leaf function")
+        dest="leaf",
+        default="",
+        help="prune call graph to show only ancestors of specified leaf function",
+    )
     optparser.add_option(
-        '--depth',
+        "--depth",
         type="int",
-        dest="depth", default=-1,
-        help="prune call graph to show only descendants or ancestors until specified depth")
+        dest="depth",
+        default=-1,
+        help="prune call graph to show only descendants or ancestors until specified depth",
+    )
     # add a new option to control skew of the colorization curve
     optparser.add_option(
-        '--skew',
-        type="float", dest="theme_skew", default=1.0,
-        help="skew the colorization curve.  Values < 1.0 give more variety to lower percentages.  Values > 1.0 give less variety to lower percentages")
+        "--skew",
+        type="float",
+        dest="theme_skew",
+        default=1.0,
+        help="skew the colorization curve.  Values < 1.0 give more variety to lower percentages.  Values > 1.0 give less variety to lower percentages",
+    )
     # add option for filtering by file path
     optparser.add_option(
-        '-p', '--path', action="append",
-        type="string", dest="filter_paths",
-        help="Filter all modules not in a specified path")
+        "-p",
+        "--path",
+        action="append",
+        type="string",
+        dest="filter_paths",
+        help="Filter all modules not in a specified path",
+    )
     (options, args) = optparser.parse_args(argv)
 
-    if len(args) > 1 and options.format != 'pstats':
-        optparser.error('incorrect number of arguments')
+    if len(args) > 1 and options.format != "pstats":
+        optparser.error("incorrect number of arguments")
 
     try:
         theme = themes[options.theme]
     except KeyError:
-        optparser.error('invalid colormap \'%s\'' % options.theme)
+        optparser.error("invalid colormap '%s'" % options.theme)
 
     # set skew on the theme now that it has been picked.
     if options.theme_skew:
@@ -3441,37 +3645,43 @@ def main(argv=sys.argv[1:]):
     try:
         Format = formats[options.format]
     except KeyError:
-        optparser.error('invalid format \'%s\'' % options.format)
+        optparser.error("invalid format '%s'" % options.format)
 
     if Format.stdinInput:
         if not args:
             fp = sys.stdin
         elif PYTHON_3:
-            fp = open(args[0], 'rt', encoding='UTF-8')
+            fp = open(args[0], "rt", encoding="UTF-8")
         else:
-            fp = open(args[0], 'rt')
+            fp = open(args[0], "rt")
         parser = Format(fp)
     elif Format.multipleInput:
         if not args:
-            optparser.error('at least a file must be specified for %s input' % options.format)
+            optparser.error(
+                "at least a file must be specified for %s input" % options.format
+            )
         parser = Format(*args)
     else:
         if len(args) != 1:
-            optparser.error('exactly one file must be specified for %s input' % options.format)
+            optparser.error(
+                "exactly one file must be specified for %s input" % options.format
+            )
         parser = Format(args[0])
 
     profile = parser.parse()
 
     if options.output is None:
         if PYTHON_3:
-            output = open(sys.stdout.fileno(), mode='wt', encoding='UTF-8', closefd=False)
+            output = open(
+                sys.stdout.fileno(), mode="wt", encoding="UTF-8", closefd=False
+            )
         else:
             output = sys.stdout
     else:
         if PYTHON_3:
-            output = open(options.output, 'wt', encoding='UTF-8')
+            output = open(options.output, "wt", encoding="UTF-8")
         else:
-            output = open(options.output, 'wt')
+            output = open(options.output, "wt")
 
     dot = DotWriter(output)
     dot.strip = options.strip
@@ -3483,23 +3693,36 @@ def main(argv=sys.argv[1:]):
         dot.show_function_events.append(SAMPLES)
 
     profile = profile
-    profile.prune(options.node_thres/100.0, options.edge_thres/100.0, options.filter_paths, options.color_nodes_by_selftime)
+    profile.prune(
+        options.node_thres / 100.0,
+        options.edge_thres / 100.0,
+        options.filter_paths,
+        options.color_nodes_by_selftime,
+    )
 
     if options.root:
         rootIds = profile.getFunctionIds(options.root)
         if not rootIds:
-            sys.stderr.write('root node ' + options.root + ' not found (might already be pruned : try -e0 -n0 flags)\n')
+            sys.stderr.write(
+                "root node "
+                + options.root
+                + " not found (might already be pruned : try -e0 -n0 flags)\n"
+            )
             sys.exit(1)
         profile.prune_root(rootIds, options.depth)
     if options.leaf:
         leafIds = profile.getFunctionIds(options.leaf)
         if not leafIds:
-            sys.stderr.write('leaf node ' + options.leaf + ' not found (maybe already pruned : try -e0 -n0 flags)\n')
+            sys.stderr.write(
+                "leaf node "
+                + options.leaf
+                + " not found (maybe already pruned : try -e0 -n0 flags)\n"
+            )
             sys.exit(1)
         profile.prune_leaf(leafIds, options.depth)
 
     dot.graph(profile, theme)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
